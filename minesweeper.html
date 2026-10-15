@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>マインスイーパー</title>
+<style>
+  :root {
+    --bg: #eef1f5;
+    --panel: #ffffff;
+    --text: #1f2933;
+    --muted: #6b7785;
+    --cell: #c9d3df;
+    --cell-hover: #b8c4d3;
+    --open: #f7f9fb;
+    --border: #d5dce4;
+    --accent: #2f6fde;
+    --boom: #e5484d;
+    --n1: #2563eb; --n2: #15803d; --n3: #dc2626; --n4: #6d28d9;
+    --n5: #9a3412; --n6: #0e7490; --n7: #111827; --n8: #6b7280;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15181d;
+      --panel: #1f242b;
+      --text: #e6e9ee;
+      --muted: #9aa4b1;
+      --cell: #3a4350;
+      --cell-hover: #46505f;
+      --open: #262c34;
+      --border: #333b46;
+      --accent: #6b9cff;
+      --boom: #f2555a;
+      --n1: #7aa7ff; --n2: #5fd38a; --n3: #ff7a7a; --n4: #c4a3ff;
+      --n5: #f2a65a; --n6: #5ad1e0; --n7: #e6e9ee; --n8: #9aa4b1;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 16px; }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 12px;
+  }
+  .controls button, .custom input {
+    font: inherit;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .controls button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .custom {
+    display: none; gap: 8px; flex-wrap: wrap; justify-content: center; align-items: center;
+    margin-bottom: 12px; font-size: 0.9rem;
+  }
+  .custom.show { display: flex; }
+  .custom input { width: 64px; cursor: text; }
+  .board-wrap {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .status {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 12px; margin-bottom: 12px; font-variant-numeric: tabular-nums;
+  }
+  .counter { font-size: 1.2rem; font-weight: 600; min-width: 4.5em; }
+  .counter.right { text-align: right; }
+  #face {
+    font-size: 1.6rem; line-height: 1; padding: 4px 8px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); cursor: pointer;
+  }
+  #board {
+    display: grid;
+    gap: 2px;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  .cell {
+    width: var(--size, 30px);
+    height: var(--size, 30px);
+    border: none;
+    border-radius: 4px;
+    background: var(--cell);
+    font: 700 calc(var(--size, 30px) * 0.55) / 1 system-ui, sans-serif;
+    color: var(--text);
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+    cursor: pointer;
+  }
+  .cell:hover:not(.open) { background: var(--cell-hover); }
+  .cell.open { background: var(--open); cursor: default; }
+  .cell.boom { background: var(--boom); }
+  .cell.wrong { text-decoration: line-through; }
+  .n1 { color: var(--n1); } .n2 { color: var(--n2); } .n3 { color: var(--n3); } .n4 { color: var(--n4); }
+  .n5 { color: var(--n5); } .n6 { color: var(--n6); } .n7 { color: var(--n7); } .n8 { color: var(--n8); }
+  .message { min-height: 1.5em; margin-top: 12px; font-weight: 600; text-align: center; }
+  .help { color: var(--muted); font-size: 0.85rem; margin-top: 16px; text-align: center; line-height: 1.6; }
+  .mode-toggle { margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>💣 マインスイーパー</h1>
+
+  <div class="controls" id="levels">
+    <button data-level="beginner">初級 9×9</button>
+    <button data-level="intermediate">中級 16×16</button>
+    <button data-level="expert">上級 30×16</button>
+    <button data-level="custom">カスタム</button>
+  </div>
+
+  <div class="custom" id="customPanel">
+    <label>幅 <input type="number" id="cw" min="5" max="50" value="20"></label>
+    <label>高さ <input type="number" id="ch" min="5" max="30" value="15"></label>
+    <label>地雷 <input type="number" id="cm" min="1" value="50"></label>
+    <div class="controls" style="margin:0"><button id="customStart">開始</button></div>
+  </div>
+
+  <div class="board-wrap">
+    <div class="status">
+      <div class="counter" id="mines" title="残り地雷数">💣 0</div>
+      <button id="face" title="リスタート">🙂</button>
+      <div class="counter right" id="timer" title="経過時間">⏱ 0</div>
+    </div>
+    <div id="board"></div>
+  </div>
+
+  <div class="controls mode-toggle">
+    <button id="flagMode" title="タップで旗を立てるモード（スマホ向け）">🚩 旗モード: OFF</button>
+  </div>
+
+  <div class="message" id="message"></div>
+  <div class="help" id="best"></div>
+  <div class="help">
+    左クリック：開く ／ 右クリック：旗 ／ 数字をクリック（またはダブルクリック）：周囲をまとめて開く<br>
+    スマホ：タップで開く ／ 長押しで旗 ／ キーボード：R でリスタート
+  </div>
+
+<script>
+(() => {
+  const LEVELS = {
+    beginner:     { w: 9,  h: 9,  m: 10 },
+    intermediate: { w: 16, h: 16, m: 40 },
+    expert:       { w: 30, h: 16, m: 99 },
+  };
+  const LEVEL_NAMES = { beginner: '初級', intermediate: '中級', expert: '上級' };
+
+  const boardEl = document.getElementById('board');
+  const minesEl = document.getElementById('mines');
+  const timerEl = document.getElementById('timer');
+  const faceEl = document.getElementById('face');
+  const msgEl = document.getElementById('message');
+  const bestEl = document.getElementById('best');
+  const flagModeBtn = document.getElementById('flagMode');
+  const customPanel = document.getElementById('customPanel');
+
+  let level = 'beginner';
+  let W, H, M;
+  let cells = [];       // { mine, open, flag, n, el }
+  let started = false, over = false;
+  let openedCount = 0, flagCount = 0;
+  let startTime = 0, timerId = null;
+  let flagMode = false;
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  const idx = (x, y) => y * W + x;
+  function neighbors(i) {
+    const x = i % W, y = (i / W) | 0, out = [];
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < W && ny >= 0 && ny < H) out.push(idx(nx, ny));
+      }
+    return out;
+  }
+
+  function newGame(cfg) {
+    if (cfg) { W = cfg.w; H = cfg.h; M = cfg.m; }
+    stopTimer();
+    started = false; over = false;
+    openedCount = 0; flagCount = 0;
+    timerEl.textContent = '⏱ 0';
+    faceEl.textContent = '🙂';
+    msgEl.textContent = '';
+
+    const size = Math.max(22, Math.min(34, Math.floor((Math.min(window.innerWidth, 1100) - 64) / W) - 2));
+    boardEl.style.setProperty('--size', size + 'px');
+    boardEl.style.gridTemplateColumns = `repeat(${W}, var(--size))`;
+    boardEl.innerHTML = '';
+    cells = [];
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < W * H; i++) {
+      const el = document.createElement('button');
+      el.className = 'cell';
+      el.dataset.i = i;
+      el.setAttribute('aria-label', 'セル');
+      frag.appendChild(el);
+      cells.push({ mine: false, open: false, flag: false, n: 0, el });
+    }
+    boardEl.appendChild(frag);
+    updateMines();
+    showBest();
+  }
+
+  // 最初にクリックしたマスとその周囲には地雷を置かない
+  function placeMines(safe) {
+    const forbidden = new Set([safe, ...neighbors(safe)]);
+    let pool = [];
+    for (let i = 0; i < W * H; i++) if (!forbidden.has(i)) pool.push(i);
+    if (pool.length < M) { // 地雷が多すぎる場合はクリックしたマスだけ安全にする
+      pool = [];
+      for (let i = 0; i < W * H; i++) if (i !== safe) pool.push(i);
+    }
+    for (let k = 0; k < M; k++) {
+      const r = k + Math.floor(Math.random() * (pool.length - k));
+      [pool[k], pool[r]] = [pool[r], pool[k]];
+      cells[pool[k]].mine = true;
+    }
+    for (let i = 0; i < cells.length; i++)
+      cells[i].n = neighbors(i).filter(j => cells[j].mine).length;
+  }
+
+  function startTimer() {
+    startTime = Date.now();
+    timerId = setInterval(() => {
+      timerEl.textContent = '⏱ ' + Math.min(999, Math.floor((Date.now() - startTime) / 1000));
+    }, 250);
+  }
+  function stopTimer() { if (timerId) clearInterval(timerId); timerId = null; }
+
+  function updateMines() { minesEl.textContent = '💣 ' + (M - flagCount); }
+
+  function render(i) {
+    const c = cells[i], el = c.el;
+    el.className = 'cell';
+    el.textContent = '';
+    if (c.open) {
+      el.classList.add('open');
+      if (c.mine) el.textContent = '💣';
+      else if (c.n) { el.textContent = c.n; el.classList.add('n' + c.n); }
+    } else if (c.flag) {
+      el.textContent = '🚩';
+    }
+  }
+
+  function open(i) {
+    if (over) return;
+    const c = cells[i];
+    if (c.open || c.flag) return;
+    if (!started) { placeMines(i); started = true; startTimer(); }
+    if (c.mine) { lose(i); return; }
+    // 0 のマスから連鎖的に開く（スタックで反復）
+    const stack = [i];
+    while (stack.length) {
+      const j = stack.pop(), cj = cells[j];
+      if (cj.open || cj.flag) continue;
+      cj.open = true; openedCount++;
+      render(j);
+      if (cj.n === 0) for (const k of neighbors(j)) if (!cells[k].open && !cells[k].flag) stack.push(k);
+    }
+    checkWin();
+  }
+
+  // 数字マスの周囲の旗の数が一致していれば残りを開く
+  function chord(i) {
+    const c = cells[i];
+    if (over || !c.open || c.n === 0) return;
+    const ns = neighbors(i);
+    if (ns.filter(j => cells[j].flag).length !== c.n) return;
+    for (const j of ns) if (!cells[j].open && !cells[j].flag) { open(j); if (over) return; }
+  }
+
+  function toggleFlag(i) {
+    if (over) return;
+    const c = cells[i];
+    if (c.open) return;
+    c.flag = !c.flag;
+    flagCount += c.flag ? 1 : -1;
+    render(i);
+    updateMines();
+  }
+
+  function lose(hit) {
+    over = true; stopTimer();
+    faceEl.textContent = '😵';
+    msgEl.textContent = 'ドカーン！ゲームオーバー';
+    cells.forEach((c, i) => {
+      if (c.mine && !c.flag) { c.open = true; render(i); }
+      else if (!c.mine && c.flag) { c.el.classList.add('wrong'); c.el.textContent = '❌'; }
+    });
+    cells[hit].el.classList.add('boom');
+  }
+
+  function checkWin() {
+    if (openedCount !== W * H - M) return;
+    over = true; stopTimer();
+    const t = ((Date.now() - startTime) / 1000);
+    faceEl.textContent = '😎';
+    cells.forEach((c, i) => { if (c.mine && !c.flag) { c.flag = true; render(i); } });
+    flagCount = M; updateMines();
+    let msg = `クリア！ ${t.toFixed(1)} 秒`;
+    if (LEVELS[level]) {
+      const key = 'ms-best-' + level;
+      const prev = parseFloat(store.get(key));
+      if (!(prev <= t)) { store.set(key, t.toFixed(1)); msg += '　🏆 自己ベスト更新！'; }
+    }
+    msgEl.textContent = msg;
+    showBest();
+  }
+
+  function showBest() {
+    const parts = Object.keys(LEVELS).map(k => {
+      const v = store.get('ms-best-' + k);
+      return `${LEVEL_NAMES[k]}: ${v ? v + '秒' : '—'}`;
+    });
+    bestEl.textContent = '自己ベスト　' + parts.join('　');
+  }
+
+  // ---- 入力処理 ----
+  const cellIndex = e => {
+    const t = e.target.closest('.cell');
+    return t ? +t.dataset.i : -1;
+  };
+
+  let longPressTimer = null, longPressed = false;
+
+  boardEl.addEventListener('click', e => {
+    const i = cellIndex(e);
+    if (i < 0 || longPressed) { longPressed = false; return; }
+    if (cells[i].open) chord(i);
+    else if (flagMode) toggleFlag(i);
+    else open(i);
+  });
+  boardEl.addEventListener('dblclick', e => {
+    const i = cellIndex(e);
+    if (i >= 0) chord(i);
+  });
+  boardEl.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    const i = cellIndex(e);
+    if (i >= 0 && !longPressed) toggleFlag(i);
+  });
+  boardEl.addEventListener('mousedown', e => {
+    if (e.button === 0 && !over && cellIndex(e) >= 0) faceEl.textContent = '😮';
+  });
+  window.addEventListener('mouseup', () => { if (!over) faceEl.textContent = '🙂'; });
+
+  // スマホ：長押しで旗
+  boardEl.addEventListener('touchstart', e => {
+    const i = cellIndex(e);
+    if (i < 0) return;
+    longPressed = false;
+    longPressTimer = setTimeout(() => {
+      longPressed = true;
+      if (cells[i].open) chord(i); else toggleFlag(i);
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, 400);
+  }, { passive: true });
+  const cancelLong = () => { clearTimeout(longPressTimer); };
+  boardEl.addEventListener('touchend', cancelLong);
+  boardEl.addEventListener('touchmove', cancelLong, { passive: true });
+  boardEl.addEventListener('touchcancel', cancelLong);
+
+  faceEl.addEventListener('click', () => newGame());
+  window.addEventListener('keydown', e => {
+    if ((e.key === 'r' || e.key === 'R') && !(e.target instanceof HTMLInputElement)) newGame();
+  });
+
+  flagModeBtn.addEventListener('click', () => {
+    flagMode = !flagMode;
+    flagModeBtn.textContent = '🚩 旗モード: ' + (flagMode ? 'ON' : 'OFF');
+    flagModeBtn.classList.toggle('active', flagMode);
+  });
+
+  function setLevel(name) {
+    level = name;
+    document.querySelectorAll('#levels button').forEach(b =>
+      b.classList.toggle('active', b.dataset.level === name));
+    customPanel.classList.toggle('show', name === 'custom');
+    store.set('ms-level', name);
+    if (LEVELS[name]) newGame(LEVELS[name]);
+  }
+
+  document.querySelectorAll('#levels button').forEach(b =>
+    b.addEventListener('click', () => {
+      setLevel(b.dataset.level);
+      if (b.dataset.level === 'custom') startCustom();
+    }));
+
+  function startCustom() {
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v | 0));
+    const w = clamp(+document.getElementById('cw').value, 5, 50);
+    const h = clamp(+document.getElementById('ch').value, 5, 30);
+    const m = clamp(+document.getElementById('cm').value, 1, w * h - 1);
+    document.getElementById('cw').value = w;
+    document.getElementById('ch').value = h;
+    document.getElementById('cm').value = m;
+    newGame({ w, h, m });
+  }
+  document.getElementById('customStart').addEventListener('click', startCustom);
+
+  const saved = store.get('ms-level');
+  setLevel(LEVELS[saved] ? saved : 'beginner');
+})();
+</script>
+</body>
+</html>
