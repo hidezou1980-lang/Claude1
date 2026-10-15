@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>ピコ・アドベンチャー</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0; height: 100%; background: #111; color: #eee; overflow: hidden;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+    font-family: 'DotGothic16', sans-serif;
+  }
+  #wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; background: #5c94fc; display: block; }
+  #touch { position: fixed; left: 0; right: 0; bottom: 0; display: none; justify-content: space-between;
+           padding: 0 16px 20px; pointer-events: none; }
+  #touch.on { display: flex; }
+  .pad { display: flex; gap: 14px; pointer-events: auto; }
+  .pad button {
+    width: 68px; height: 68px; border-radius: 50%; border: 2px solid rgba(255,255,255,.55);
+    background: rgba(0,0,0,.35); color: #fff; font: 22px 'Press Start 2P', monospace;
+    touch-action: none; -webkit-tap-highlight-color: transparent;
+  }
+  .pad button.down { background: rgba(255,255,255,.35); }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game"></canvas></div>
+<div id="touch">
+  <div class="pad"><button data-k="left">◀</button><button data-k="right">▶</button></div>
+  <div class="pad"><button data-k="run">B</button><button data-k="jump">A</button></div>
+</div>
+<script>
+'use strict';
+// =====================================================================
+//  基本設定
+// =====================================================================
+const TILE = 16, VW = 320, VH = 240, SCALE = 3;
+const cv = document.getElementById('game');
+cv.width = VW * SCALE; cv.height = VH * SCALE;
+const ctx = cv.getContext('2d');
+
+function resize() {
+  const s = Math.min(innerWidth / VW, innerHeight / VH);
+  cv.style.width = Math.floor(VW * s) + 'px';
+  cv.style.height = Math.floor(VH * s) + 'px';
+}
+addEventListener('resize', resize); resize();
+
+// =====================================================================
+//  スプライト（ドット絵を文字列で定義）
+// =====================================================================
+function makeSprite(rows, pal, w) {
+  w = w || Math.max(...rows.map(r => r.length));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = rows.length;
+  const g = c.getContext('2d');
+  rows.forEach((r, y) => {
+    for (let x = 0; x < w; x++) {
+      const ch = r[x];
+      if (ch && ch !== '.' && pal[ch]) { g.fillStyle = pal[ch]; g.fillRect(x, y, 1, 1); }
+    }
+  });
+  return c;
+}
+function flipH(src) {
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  const g = c.getContext('2d');
+  g.translate(src.width, 0); g.scale(-1, 1); g.drawImage(src, 0, 0);
+  return c;
+}
+function tileCanvas(fn) {
+  const c = document.createElement('canvas');
+  c.width = c.height = TILE;
+  fn(c.getContext('2d'));
+  return c;
+}
+
+// --- 主人公「ピコ」 ---
+const PPAL = { R: '#e2482b', S: '#ffc896', H: '#6b3a1e', E: '#1a1a1a', B: '#2f6fdb',
+               W: '#ffffff', Y: '#ffd23f', K: '#5a2d0c' };
+const P_HEAD = [
+  '.....RRRRR......',
+  '....RRRRRRRR....',
+  '....RRRRRRRRRRR.',
+  '....HHSSSES.....',
+  '...HSHSSSESSS...',
+  '...HSSSSSSSSS...',
+  '....SSSSSSSS....',
+  '.....SSSSS......',
+];
+const P_TORSO = [
+  '....WBBBBBW.....',
+  '...WWBYBYBWW....',
+  '...SSBBBBBSS....',
+  '....BBBBBBB.....',
+];
+const P_TORSO_J = [
+  '..SWBBBBBBWS....',
+  '...WBYBYBBW.....',
+  '....BBBBBBB.....',
+  '....BBBBBBB.....',
+];
+const P_LEGS = {
+  stand: ['....BBB.BBB.....', '....BBB.BBB.....', '...KKKK.KKKK....', '...KKKK.KKKK....'],
+  w1:    ['...BBB...BBB....', '..BBB.....BBB...', '.KKKK.....KKKK..', '.KKK.......KKK..'],
+  w2:    ['.....BBBBB......', '.....BBBB.......', '.....KKKKK......', '......KKKK......'],
+  jump:  ['...BBB..BBBB....', '..BBB.....KKKK..', '.KKKK.....KKK...', '.KKK............'],
+};
+function buildPlayer(big) {
+  const dbl = a => a.flatMap(r => [r, r]);
+  const f = (torso, legs) => big ? [...P_HEAD, ...dbl(torso), ...dbl(legs)] : [...P_HEAD, ...torso, ...legs];
+  const frames = {
+    stand: f(P_TORSO, P_LEGS.stand), w1: f(P_TORSO, P_LEGS.w1),
+    w2: f(P_TORSO, P_LEGS.w2), jump: f(P_TORSO_J, P_LEGS.jump),
+  };
+  const out = {};
+  for (const k in frames) { const s = makeSprite(frames[k], PPAL, 16); out[k] = [s, flipH(s)]; }
+  return out;
+}
+const SPR_P = { small: buildPlayer(false), big: buildPlayer(true) };
+
+// --- スライム（ふみつけるとつぶれる） ---
+const SLPAL = { P: '#8e44ad', L: '#c38ee0', W: '#ffffff', k: '#1a1a1a', D: '#5e2a75' };
+const SLIME_A = [
+  '................', '................', '................', '................',
+  '......PPPP......',
+  '....PPPPPPPP....',
+  '...PPLLPPPPPP...',
+  '..PPLLPPPPPPPP..',
+  '..PPWWPPPPWWPP..',
+  '.PPPWkPPPPWkPPP.',
+  '.PPPWkPPPPWkPPP.',
+  '.PPPPPPPPPPPPPP.',
+  '.PPPPPDDDDPPPPP.',
+  '.PPPPPPPPPPPPPP.',
+  'PPPPPPPPPPPPPPPP',
+  '.DDDDDDDDDDDDDD.',
+];
+const SLIME_B = [
+  '................', '................', '................', '................', '................',
+  '.....PPPPPP.....',
+  '...PPLLPPPPPP...',
+  '..PPLLPPPPPPPP..',
+  '.PPPWWPPPPWWPPP.',
+  '.PPPWkPPPPWkPPP.',
+  'PPPPWkPPPPWkPPPP',
+  'PPPPPPPPPPPPPPPP',
+  'PPPPPPDDDDPPPPPP',
+  'PPPPPPPPPPPPPPPP',
+  'PPPPPPPPPPPPPPPP',
+  '.DDDDDDDDDDDDDD.',
+];
+const SLIME_FLAT = [
+  '..PPPPPPPPPPPP..',
+  '.PPWkPPPPPPWkPP.',
+  'PPPPPPPPPPPPPPPP',
+  '.DDDDDDDDDDDDDD.',
+];
+const SPR_SLIME = [makeSprite(SLIME_A, SLPAL), makeSprite(SLIME_B, SLPAL)];
+const SPR_SLIME_FLAT = makeSprite(SLIME_FLAT, SLPAL);
+
+// --- カブトムシ（ふむと甲羅になる） ---
+const BTPAL = { G: '#2e9e3a', g: '#8be89a', Y: '#f5d76e', W: '#ffffff', k: '#1a1a1a', O: '#e07b1a' };
+const BEETLE_A = [
+  '.YYY............',
+  'YYYYY...........',
+  'YWkYY...........',
+  'YWkYY...........',
+  'YYYYY...........',
+  '.YYYY...........',
+  '..YYY...GGGG....',
+  '..YY...GGggGG...',
+  '..YY..GGgGGgGG..',
+  '..YY.GGgGGGGgGG.',
+  '..YYGGGGGGGGGGG.',
+  '...YGgGGGGGGgGG.',
+  '...YGGgGGGGgGGG.',
+  '...YGGGGggGGGGG.',
+  '....GGGGGGGGGGG.',
+  '....WWWWWWWWWWW.',
+  '.....YYY...YYY..',
+  '.....YYY...YYY..',
+  '....OOOO..OOOO..',
+  '....OOOO..OOOO..',
+];
+const BEETLE_B = BEETLE_A.slice(0, 16).concat([
+  '......YYY.YYY...',
+  '......YYY.YYY...',
+  '.....OOOOOOOO...',
+  '.....OOOOOOOO...',
+]);
+const SHELL = [
+  '.....GGGGGG.....',
+  '...GGggGGggGG...',
+  '..GGgGGGGGGgGG..',
+  '.GGgGGGGGGGGgGG.',
+  '.GGGGGGGGGGGGGG.',
+  'GGgGGGGggGGGGgGG',
+  'GGGgGGGGGGGGgGGG',
+  'GGGGggGGGGggGGGG',
+  '.GGGGGGGGGGGGGG.',
+  'WWWWWWWWWWWWWWWW',
+  '.WWWWWWWWWWWWWW.',
+  '................',
+  '................',
+  '................',
+];
+const SPR_BEETLE = [BEETLE_A, BEETLE_B].map(r => { const s = makeSprite(r, BTPAL, 16); return [s, flipH(s)]; });
+const SPR_SHELL = makeSprite(SHELL, BTPAL, 16);
+
+// --- パワーアップ：スーパーりんご ---
+const APPLE = [
+  '.......kk.......',
+  '.......k.LL.....',
+  '......kLLL......',
+  '...rrrrk.rrr....',
+  '..rrRRRrrrrrr...',
+  '.rrRWWRrrrrrrr..',
+  '.rrRWRRrrrrrrr..',
+  '.rrRRRrrrrrrrr..',
+  '.rrrrrrrrrrrrr..',
+  '.rrrrrrrrrrrrr..',
+  '.rrrrrrrrrrrrr..',
+  '..rrrrrrrrrrr...',
+  '..rrrrrrrrrrr...',
+  '...rrrrrrrrr....',
+  '....rrr..rrr....',
+  '................',
+];
+const SPR_APPLE = makeSprite(APPLE, { r: '#e02424', R: '#ff6a5a', W: '#ffffff', k: '#6b3a1e', L: '#3cb043' }, 16);
+
+const HEART = ['.RR.RR.', 'RRRRRRR', 'RRRRRRR', '.RRRRR.', '..RRR..', '...R...'];
+const SPR_HEART = makeSprite(HEART, { R: '#ff4d6d' });
+
+// --- タイル ---
+const TILES = {};
+TILES.ground = tileCanvas(g => {
+  g.fillStyle = '#b8622c'; g.fillRect(0, 0, 16, 16);
+  g.fillStyle = '#8a4519';
+  [[2, 3], [9, 6], [12, 1], [5, 11], [1, 9], [13, 13]].forEach(([x, y]) => g.fillRect(x, y, 2, 1));
+  g.fillStyle = '#d98a4e';
+  [[6, 4], [11, 10], [3, 14], [14, 7]].forEach(([x, y]) => g.fillRect(x, y, 1, 1));
+});
+TILES.groundTop = tileCanvas(g => {
+  g.drawImage(TILES.ground, 0, 0);
+  g.fillStyle = '#3cb043'; g.fillRect(0, 0, 16, 4);
+  g.fillStyle = '#8ef08e'; g.fillRect(0, 0, 16, 1);
+  g.fillStyle = '#2a8a32'; [0, 3, 6, 9, 12, 15].forEach(x => g.fillRect(x, 4, 2, 1));
+});
+TILES.brick = tileCanvas(g => {
+  g.fillStyle = '#c4581c'; g.fillRect(0, 0, 16, 16);
+  g.fillStyle = '#2a1206';
+  for (let r = 0; r < 4; r++) {
+    g.fillRect(0, r * 4 + 3, 16, 1);
+    const off = r % 2 ? 4 : 0;
+    g.fillRect(off, r * 4, 1, 3); g.fillRect(off + 8, r * 4, 1, 3);
+  }
+  g.fillStyle = '#f4a070'; g.fillRect(0, 0, 16, 1);
+});
+TILES.hard = tileCanvas(g => {
+  g.fillStyle = '#9a5a2a'; g.fillRect(0, 0, 16, 16);
+  g.fillStyle = '#d6995e'; g.fillRect(0, 0, 16, 1); g.fillRect(0, 0, 1, 16);
+  g.fillStyle = '#4a240c'; g.fillRect(0, 15, 16, 1); g.fillRect(15, 0, 1, 16);
+  g.fillStyle = '#b87440'; g.fillRect(3, 3, 10, 10);
+  g.fillStyle = '#d6995e'; g.fillRect(3, 3, 10, 1); g.fillRect(3, 3, 1, 10);
+  g.fillStyle = '#7a4018'; g.fillRect(3, 12, 10, 1); g.fillRect(12, 3, 1, 10);
+});
+TILES.used = tileCanvas(g => {
+  g.fillStyle = '#3a1e08'; g.fillRect(0, 0, 16, 16);
+  g.fillStyle = '#8a5a2a'; g.fillRect(1, 1, 14, 14);
+  g.fillStyle = '#3a1e08'; [[2, 2], [13, 2], [2, 13], [13, 13]].forEach(([x, y]) => g.fillRect(x, y, 1, 1));
+});
+const QROWS = [
+  '.oooooooooooooo.',
+  'oyyyyyyyyyyyyyyk',
+  'oydyyyyyyyyyydyk',
+  'oyyyyywwwwyyyyyk',
+  'oyyyywwkkwwyyyyk',
+  'oyyyywwkyywwkyyk',
+  'oyyyyykkyywwkyyk',
+  'oyyyyyyyywwkkyyk',
+  'oyyyyyyywwkkyyyk',
+  'oyyyyyyywwkyyyyk',
+  'oyyyyyyykkkyyyyk',
+  'oyyyyyyywwyyyyyk',
+  'oyyyyyyywwkyyyyk',
+  'oydyyyyyykkyydyk',
+  'oyyyyyyyyyyyyyyk',
+  'kkkkkkkkkkkkkkkk',
+];
+TILES.q = ['#f8b800', '#ffd85a', '#d89000'].map(y =>
+  makeSprite(QROWS, { o: '#ffe9a8', y, d: '#8a5000', w: '#fff6dc', k: '#5a3200' }, 16));
+TILES.pipeTL = tileCanvas(g => {
+  g.fillStyle = '#0b2e0b'; g.fillRect(0, 0, 16, 16);
+  g.fillStyle = '#30a030'; g.fillRect(1, 1, 15, 14);
+  g.fillStyle = '#5fd04f'; g.fillRect(4, 1, 3, 14);
+  g.fillStyle = '#b6f590'; g.fillRect(5, 1, 1, 14);
+});
+TILES.pipeTR = tileCanvas(g => {
+  g.fillStyle = '#0b2e0b'; g.fillRect(0, 0, 16, 16);
+  g.fillStyle = '#30a030'; g.fillRect(0, 1, 15, 14);
+  g.fillStyle = '#1a6e1a'; g.fillRect(8, 1, 4, 14);
+});
+TILES.pipeL = tileCanvas(g => {
+  g.fillStyle = '#0b2e0b'; g.fillRect(2, 0, 14, 16);
+  g.fillStyle = '#30a030'; g.fillRect(3, 0, 13, 16);
+  g.fillStyle = '#5fd04f'; g.fillRect(6, 0, 3, 16);
+  g.fillStyle = '#b6f590'; g.fillRect(7, 0, 1, 16);
+});
+TILES.pipeR = tileCanvas(g => {
+  g.fillStyle = '#0b2e0b'; g.fillRect(0, 0, 14, 16);
+  g.fillStyle = '#30a030'; g.fillRect(0, 0, 13, 16);
+  g.fillStyle = '#1a6e1a'; g.fillRect(7, 0, 3, 16);
+});
+
+// =====================================================================
+//  サウンド（WebAudio で効果音と BGM を合成）
+// =====================================================================
+let actx = null;
+function initAudio() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; } }
+  if (actx && actx.state === 'suspended') actx.resume();
+}
+function beep(freq, dur, type = 'square', vol = 0.07, slide = null, delay = 0) {
+  if (!actx) return;
+  const t = actx.currentTime + delay;
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(actx.destination);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+const seq = (notes, step, type = 'square', vol = 0.06) =>
+  notes.forEach((f, i) => beep(f, step * 1.2, type, vol, null, i * step));
+const SFX = {
+  jump:    () => beep(260, 0.16, 'square', 0.05, 640),
+  jumpBig: () => beep(190, 0.18, 'square', 0.05, 460),
+  coin:    () => { beep(988, 0.06, 'square', 0.05); beep(1319, 0.28, 'square', 0.05, null, 0.06); },
+  stomp:   () => beep(420, 0.1, 'square', 0.07, 90),
+  kick:    () => beep(700, 0.08, 'square', 0.06, 180),
+  bump:    () => beep(110, 0.1, 'triangle', 0.2),
+  brk:     () => { beep(180, 0.2, 'sawtooth', 0.07, 40); beep(90, 0.15, 'square', 0.05); },
+  sprout:  () => seq([392, 523, 659, 784], 0.05, 'triangle', 0.12),
+  power:   () => seq([523, 659, 784, 1047, 784, 1047, 1319], 0.045),
+  shrink:  () => seq([1047, 784, 659, 523, 392], 0.05),
+  oneup:   () => seq([1319, 1568, 2637, 2093, 2349, 3136], 0.07, 'square', 0.05),
+  die:     () => seq([523, 494, 466, 0.01, 392, 349, 330, 262], 0.12, 'square', 0.06),
+  flag:    () => beep(1400, 0.9, 'square', 0.05, 180),
+  hurry:   () => seq([1047, 1319, 1568, 1047, 1319, 1568], 0.08, 'square', 0.04),
+  tick:    () => beep(1760, 0.03, 'square', 0.03),
+  pause:   () => seq([880, 1100, 880, 1100], 0.06),
+  clear:   () => seq([523, 659, 784, 1047, 0.01, 784, 1047, 1047], 0.13, 'square', 0.06),
+  gameover:() => seq([523, 392, 330, 440, 494, 440, 415, 392], 0.18, 'triangle', 0.15),
+};
+
+// --- BGM（オリジナルの短いループ曲） ---
+const midi = n => 440 * Math.pow(2, (n - 69) / 12);
+const LEAD = [
+  [72,.5],[76,.5],[79,.5],[84,1],[79,.5],[76,1],
+  [77,.5],[81,.5],[84,.5],[81,.5],[79,1],[0,1],
+  [76,.5],[79,.5],[83,.5],[86,1],[83,.5],[79,1],
+  [81,.5],[79,.5],[77,.5],[76,.5],[74,1],[0,1],
+  [72,.5],[76,.5],[79,.5],[84,1],[86,.5],[88,1],
+  [86,.5],[84,.5],[81,.5],[77,.5],[79,1],[76,1],
+  [77,.5],[76,.5],[74,.5],[72,.5],[74,.5],[76,.5],[79,1],
+  [72,1.5],[0,.5],[67,.5],[71,.5],[74,1],
+];
+const BASS = [48,55,52,55, 53,60,57,60, 55,62,59,62, 55,50,55,50,
+              48,55,52,55, 53,60,57,60, 55,62,59,62, 48,55,48,43].map(n => [n, 1]);
+const music = { on: true, playing: false, tracks: null, timer: null, fast: false };
+function startMusic() {
+  if (!actx || !music.on) return;
+  stopMusic();
+  music.playing = true;
+  const t0 = actx.currentTime + 0.05;
+  music.tracks = [
+    { notes: LEAD, i: 0, t: t0, type: 'square', vol: 0.028 },
+    { notes: BASS, i: 0, t: t0, type: 'triangle', vol: 0.09 },
+  ];
+  music.timer = setInterval(scheduleMusic, 40);
+}
+function stopMusic() { music.playing = false; if (music.timer) clearInterval(music.timer); music.timer = null; }
+function scheduleMusic() {
+  if (!actx || !music.playing) return;
+  const beat = music.fast ? 0.29 : 0.42;
+  for (const tr of music.tracks) {
+    while (tr.t < actx.currentTime + 0.25) {
+      const [n, len] = tr.notes[tr.i];
+      const dur = len * beat;
+      if (n) {
+        const o = actx.createOscillator(), g = actx.createGain();
+        o.type = tr.type; o.frequency.value = midi(n);
+        g.gain.setValueAtTime(tr.vol, tr.t);
+        g.gain.setValueAtTime(tr.vol, tr.t + dur * 0.7);
+        g.gain.exponentialRampToValueAtTime(0.0001, tr.t + dur * 0.95);
+        o.connect(g).connect(actx.destination);
+        o.start(tr.t); o.stop(tr.t + dur);
+      }
+      tr.t += dur;
+      tr.i = (tr.i + 1) % tr.notes.length;
+    }
+  }
+}
+
+// =====================================================================
+//  ステージ
+// =====================================================================
+const T = { E: 0, GROUND: 1, BRICK: 2, QCOIN: 3, QPOW: 4, USED: 5, HARD: 6,
+            PTL: 7, PTR: 8, PL: 9, PR: 10, COIN: 11, BCOIN: 12 };
+const SOLID = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12]);
+
+function buildLevel() {
+  const W = 212, H = 15;
+  const map = Array.from({ length: H }, () => new Array(W).fill(T.E));
+  const enemies = [];
+  const set = (x, y, t) => { if (x >= 0 && x < W && y >= 0 && y < H) map[y][x] = t; };
+  const ground = (a, b) => { for (let x = a; x <= b; x++) { set(x, 13, T.GROUND); set(x, 14, T.GROUND); } };
+  const pipe = (x, h) => {
+    const top = 13 - h;
+    set(x, top, T.PTL); set(x + 1, top, T.PTR);
+    for (let y = top + 1; y < 13; y++) { set(x, y, T.PL); set(x + 1, y, T.PR); }
+  };
+  const col = (x, h) => { for (let j = 0; j < h; j++) set(x, 12 - j, T.HARD); };
+  const stairsUp = (x, n) => { for (let i = 0; i < n; i++) col(x + i, i + 1); };
+  const stairsDown = (x, n) => { for (let i = 0; i < n; i++) col(x + i, n - i); };
+  const CH = { B: T.BRICK, '?': T.QCOIN, M: T.QPOW, H: T.HARD, o: T.COIN, C: T.BCOIN };
+  const row = (x, y, s) => [...s].forEach((c, i) => { if (CH[c] !== undefined) set(x + i, y, CH[c]); });
+  const e = (x, type, ty = 12) => enemies.push({ tx: x, ty, type });
+
+  ground(0, 68); ground(71, 86); ground(90, 152); ground(155, W - 1);
+
+  // エリア1：はじめの一歩
+  row(16, 9, '?');
+  row(20, 9, 'BMB?B');
+  row(22, 5, '?');
+  e(22, 's');
+  row(31, 9, 'ooo');
+  pipe(28, 2); pipe(38, 3); pipe(46, 4); pipe(57, 4);
+  e(40, 's'); e(51, 's'); e(53, 's');
+  row(67, 9, 'oooo');
+
+  // エリア2：空中のレンガ
+  row(77, 9, 'B?B');
+  row(80, 5, 'BBBBBBBB');
+  row(84, 3, 'ooo');
+  e(81, 's', 4); e(83, 's', 4);
+  row(91, 5, 'BBB?');
+  row(94, 9, 'C');
+  e(97, 's'); e(98, 's');
+  row(100, 9, 'BB');
+  row(106, 9, '?'); row(109, 9, '?'); row(112, 9, '?');
+  row(109, 5, 'M');
+  e(107, 'k');
+  e(114, 's'); e(115, 's');
+  row(118, 9, 'C');
+  row(121, 5, 'BBB');
+  e(124, 's'); e(125, 's');
+  row(128, 5, 'B??B');
+  row(129, 9, 'BB');
+  e(130, 's'); e(131, 's');
+
+  // エリア3：階段とジャンプ
+  stairsUp(134, 4); stairsDown(140, 4);
+  stairsUp(148, 5); stairsDown(155, 4);
+  row(160, 8, 'oooo');
+  pipe(163, 2);
+  row(168, 9, 'BB?B');
+  e(172, 's'); e(173, 's'); e(176, 'k');
+  pipe(179, 2);
+  stairsUp(181, 8); col(189, 8);
+
+  // ゴール
+  const flagX = 198;
+  set(flagX, 12, T.HARD);
+  return { w: W, h: H, map, enemies, flagX, castleX: 202 };
+}
+
+// =====================================================================
+//  ゲーム状態
+// =====================================================================
+const G = {
+  state: 'title', stateTimer: 0, frame: 0, prevState: null,
+  score: 0, coins: 0, lives: 3, time: 300, timeTick: 24,
+  level: null, cam: { x: 0 }, player: null,
+  enemies: [], items: [], fx: [], particles: [], popups: [], bumps: new Map(),
+  checkpoint: false, jumpBuf: 0, action: false,
+  flag: { phase: 0, y: 0, t: 0 }, best: 0,
+};
+try { G.best = +localStorage.getItem('pico-best') || 0; } catch (e) {}
+
+const input = { left: false, right: false, jump: false, run: false };
+
+function setState(s) { G.state = s; G.stateTimer = 0; G.action = false; G.jumpBuf = 0; }
+
+function newPlayer(x) {
+  return { x, y: 13 * TILE - 15, w: 12, h: 15, vx: 0, vy: 0, onGround: true, facing: 1,
+           big: false, inv: 0, coyote: 0, anim: 0, dead: false, pit: false, growT: 0,
+           hidden: false, prevBottom: 0 };
+}
+
+function spawnEnemy(d) {
+  const w = 14, h = d.type === 'k' ? 20 : 14;
+  return { type: d.type, x: d.tx * TILE + 1, y: (d.ty + 1) * TILE - h, w, h, vx: 0, vy: 0, dir: -1,
+           state: 'walk', active: false, anim: 0, t: 0, cool: 0, moving: false, wake: 0, grace: 0,
+           onGround: false, dead: false };
+}
+
+function loadLevel() {
+  G.level = buildLevel();
+  const spawnX = G.checkpoint ? 92 * TILE : 3 * TILE;
+  G.player = newPlayer(spawnX);
+  G.cam.x = Math.max(0, spawnX - 64);
+  G.enemies = G.level.enemies.map(spawnEnemy).filter(e => !G.checkpoint || e.x > spawnX + 128);
+  G.items = []; G.fx = []; G.particles = []; G.popups = []; G.bumps = new Map();
+  G.time = 300; G.timeTick = 24; music.fast = false;
+  setState('intro');
+}
+
+function startGame() {
+  G.score = 0; G.coins = 0; G.lives = 3; G.checkpoint = false;
+  loadLevel();
+}
+
+// =====================================================================
+//  タイル判定と移動
+// =====================================================================
+const tileGet = (tx, ty) => (tx < 0 || tx >= G.level.w || ty < 0 || ty >= G.level.h) ? T.E : G.level.map[ty][tx];
+const tileSet = (tx, ty, t) => { if (tx >= 0 && tx < G.level.w && ty >= 0 && ty < G.level.h) G.level.map[ty][tx] = t; };
+function solidAt(tx, ty) {
+  if (tx < 0 || tx >= G.level.w) return true;   // ステージ左右端は壁
+  if (ty < 0 || ty >= G.level.h) return false;
+  return SOLID.has(G.level.map[ty][tx]);
+}
+
+function moveX(e) {
+  e.x += e.vx;
+  const top = Math.floor(e.y / TILE), bot = Math.floor((e.y + e.h - 0.01) / TILE);
+  if (e.vx > 0) {
+    const tx = Math.floor((e.x + e.w - 0.01) / TILE);
+    for (let ty = top; ty <= bot; ty++) if (solidAt(tx, ty)) { e.x = tx * TILE - e.w; return true; }
+  } else if (e.vx < 0) {
+    const tx = Math.floor(e.x / TILE);
+    for (let ty = top; ty <= bot; ty++) if (solidAt(tx, ty)) { e.x = (tx + 1) * TILE; return true; }
+  }
+  return false;
+}
+
+function moveY(e) {
+  e.y += e.vy;
+  const l = Math.floor(e.x / TILE), r = Math.floor((e.x + e.w - 0.01) / TILE);
+  const res = { ground: false, head: null };
+  if (e.vy > 0) {
+    const ty = Math.floor((e.y + e.h - 0.01) / TILE);
+    for (let tx = l; tx <= r; tx++) if (solidAt(tx, ty)) { e.y = ty * TILE - e.h; e.vy = 0; res.ground = true; break; }
+  } else if (e.vy < 0) {
+    const ty = Math.floor(e.y / TILE);
+    const hits = [];
+    for (let tx = l; tx <= r; tx++) if (solidAt(tx, ty)) hits.push(tx);
+    if (hits.length) {
+      e.y = (ty + 1) * TILE; e.vy = 0;
+      const cx = Math.floor((e.x + e.w / 2) / TILE);
+      res.head = { tx: hits.includes(cx) ? cx : hits[0], ty };
+    }
+  }
+  e.onGround = res.ground;
+  return res;
+}
+
+const overlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+// =====================================================================
+//  スコア・アイテム・エフェクト
+// =====================================================================
+function addScore(n, x, y, label) {
+  G.score += n;
+  if (x !== undefined) G.popups.push({ text: label || String(n), x, y, t: 0 });
+}
+function oneUp(x, y) { G.lives++; SFX.oneup(); G.popups.push({ text: '1UP', x, y, t: 0 }); }
+function giveCoin() {
+  G.coins++; G.score += 200; SFX.coin();
+  if (G.coins >= 100) { G.coins -= 100; oneUp(G.player.x, G.player.y - 8); }
+}
+
+function addBump(tx, ty) {
+  G.bumps.set(ty * 1000 + tx, 0);
+  // ブロックの上にいる敵をやっつけ、コインを回収
+  const top = ty * TILE;
+  for (const e of G.enemies) {
+    if ((e.state === 'walk' || e.state === 'shell') && e.active &&
+        Math.abs(e.y + e.h - top) < 4 && e.x + e.w > tx * TILE && e.x < (tx + 1) * TILE) flipKill(e, 100);
+  }
+  if (tileGet(tx, ty - 1) === T.COIN) {
+    tileSet(tx, ty - 1, T.E); giveCoin();
+    G.fx.push({ type: 'coin', x: tx * TILE, y: (ty - 1) * TILE, vy: -5, t: 0 });
+  }
+  for (const it of G.items) {
+    if (it.emerge <= 0 && Math.abs(it.y + it.h - top) < 4 && it.x + it.w > tx * TILE && it.x < (tx + 1) * TILE) {
+      it.vy = -4; it.dir = (it.x + it.w / 2 < tx * TILE + 8) ? -1 : 1;
+    }
+  }
+}
+
+function headBump(tx, ty) {
+  const t = tileGet(tx, ty), p = G.player;
+  if (t === T.QCOIN || t === T.BCOIN) {
+    tileSet(tx, ty, T.USED); addBump(tx, ty); giveCoin();
+    G.fx.push({ type: 'coin', x: tx * TILE, y: (ty - 1) * TILE, vy: -5, t: 0 });
+  } else if (t === T.QPOW) {
+    tileSet(tx, ty, T.USED); addBump(tx, ty); SFX.sprout();
+    G.items.push({ type: 'apple', x: tx * TILE + 1, y: ty * TILE, w: 14, h: 14, vx: 0, vy: 0, dir: 1, emerge: 32 });
+  } else if (t === T.BRICK) {
+    if (p.big) {
+      tileSet(tx, ty, T.E); addBump(tx, ty); G.bumps.delete(ty * 1000 + tx);
+      SFX.brk(); addScore(50);
+      const cx = tx * TILE, cy = ty * TILE;
+      [[-1.2, -6], [1.2, -6], [-1.2, -4], [1.2, -4]].forEach(([vx, vy], i) =>
+        G.particles.push({ x: cx + (i % 2) * 8, y: cy + (i < 2 ? 0 : 8), vx, vy, t: 0 }));
+    } else { addBump(tx, ty); SFX.bump(); }
+  } else {
+    SFX.bump();
+  }
+}
+
+function flipKill(e, pts) {
+  e.state = 'flip'; e.vy = -4; e.vx = (e.dir || 1) * 0.8;
+  SFX.kick(); addScore(pts, e.x, e.y);
+}
+function toShell(e) {
+  e.state = 'shell'; e.y += e.h - 14; e.h = 14; e.moving = false; e.wake = 0; e.cool = 8; e.vx = 0;
+}
+
+function powerUp(item) {
+  const p = G.player;
+  if (!p.big) {
+    p.big = true; p.y -= 8; p.h = 23; p.growT = 48; SFX.power();
+  } else SFX.power();
+  addScore(1000, item.x, item.y);
+}
+
+function hurt() {
+  const p = G.player;
+  if (p.inv > 0 || p.growT > 0 || p.dead) return;
+  if (p.big) {
+    p.big = false; p.y += 8; p.h = 15; p.inv = 120; p.growT = 40; SFX.shrink();
+  } else killPlayer(false);
+}
+
+function killPlayer(pit) {
+  const p = G.player;
+  p.dead = true; p.pit = pit; p.vx = 0; p.vy = 0;
+  stopMusic(); SFX.die();
+  setState('dying');
+}
+
+// =====================================================================
+//  更新処理
+// =====================================================================
+function updatePlayer() {
+  const p = G.player;
+  p.prevBottom = p.y + p.h;
+  const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const maxS = input.run ? 2.7 : 1.6;
+  const acc = p.onGround ? (input.run ? 0.1 : 0.08) : 0.07;
+  if (dir) {
+    if (p.vx * dir < 0) p.vx += dir * (p.onGround ? 0.28 : 0.12);            // 切り返し
+    else if (Math.abs(p.vx) < maxS) p.vx = Math.min(Math.abs(p.vx) + acc, maxS) * dir;
+    else if (p.onGround) p.vx -= Math.sign(p.vx) * 0.04;                      // ダッシュ解除で減速
+    p.facing = dir;
+  } else if (p.onGround) {
+    p.vx = Math.abs(p.vx) <= 0.1 ? 0 : p.vx - Math.sign(p.vx) * 0.1;
+  }
+
+  // ジャンプ（コヨーテタイム＆先行入力つき）
+  if (p.onGround) p.coyote = 6; else if (p.coyote > 0) p.coyote--;
+  if (G.jumpBuf > 0 && p.coyote > 0) {
+    G.jumpBuf = 0; p.coyote = 0; p.onGround = false;
+    p.vy = -(5.6 + Math.abs(p.vx) * 0.32);
+    (p.big ? SFX.jumpBig : SFX.jump)();
+  }
+  const grav = (input.jump && p.vy < 0) ? 0.24 : 0.62;                    // 長押しで高く跳ぶ
+  p.vy = Math.min(p.vy + grav, 7);
+
+  if (moveX(p)) p.vx = 0;
+  if (p.x < G.cam.x) { p.x = G.cam.x; if (p.vx < 0) p.vx = 0; }
+  const res = moveY(p);
+  if (res.head) headBump(res.head.tx, res.head.ty);
+
+  // コイン回収
+  const l = Math.floor(p.x / TILE), r = Math.floor((p.x + p.w - 0.01) / TILE);
+  const t = Math.floor(p.y / TILE), b = Math.floor((p.y + p.h - 0.01) / TILE);
+  for (let ty = t; ty <= b; ty++) for (let tx = l; tx <= r; tx++) {
+    if (tileGet(tx, ty) === T.COIN) { tileSet(tx, ty, T.E); giveCoin(); }
+  }
+
+  p.anim += Math.abs(p.vx);
+  if (p.inv > 0) p.inv--;
+  if (p.y > VH + 8) killPlayer(true);
+}
+
+function updateEnemies() {
+  const p = G.player;
+  for (const e of G.enemies) {
+    if (!e.active) { if (e.x < G.cam.x + VW + 24) e.active = true; else continue; }
+    if (e.cool > 0) e.cool--;
+    if (e.grace > 0) e.grace--;
+    switch (e.state) {
+      case 'walk':
+        e.vx = e.dir * 0.5;
+        e.vy = Math.min(e.vy + 0.4, 6);
+        if (moveX(e)) e.dir = -e.dir;
+        moveY(e); e.anim++;
+        break;
+      case 'shell':
+        e.vy = Math.min(e.vy + 0.4, 6);
+        if (e.moving) {
+          e.vx = e.dir * 3.6;
+          if (moveX(e)) { e.dir = -e.dir; if (e.x > G.cam.x - 16 && e.x < G.cam.x + VW) SFX.bump(); }
+        } else {
+          e.vx = 0;
+          if (++e.wake > 420) { e.state = 'walk'; e.y -= 6; e.h = 20; e.wake = 0; e.cool = 10; }
+        }
+        moveY(e);
+        break;
+      case 'squish':
+        if (++e.t > 30) e.dead = true;
+        continue;
+      case 'flip':
+        e.vy += 0.4; e.y += e.vy; e.x += e.vx;
+        if (e.y > VH + 32) e.dead = true;
+        continue;
+    }
+    if (e.y > VH + 32 || e.x < G.cam.x - 160) { e.dead = true; continue; }
+
+    // プレイヤーとの当たり判定
+    if (!p.dead && e.cool <= 0 && overlap(p, e)) {
+      const stomp = p.vy > 0 && p.prevBottom <= e.y + 6;
+      const bounce = () => { p.vy = input.jump ? -6.6 : -4.2; p.onGround = false; };
+      if (e.state === 'walk') {
+        if (stomp) {
+          if (e.type === 's') { e.state = 'squish'; e.t = 0; } else toShell(e);
+          bounce(); SFX.stomp(); addScore(100, e.x, e.y);
+        } else hurt();
+      } else if (e.state === 'shell') {
+        if (!e.moving) {
+          e.moving = true; e.wake = 0; e.grace = 14; e.cool = 6;
+          e.dir = (p.x + p.w / 2 < e.x + e.w / 2) ? 1 : -1;
+          SFX.kick(); addScore(400, e.x, e.y);
+          if (stomp) bounce();
+        } else if (stomp) {
+          e.moving = false; e.cool = 8; bounce(); SFX.stomp(); addScore(100, e.x, e.y);
+        } else if (e.grace <= 0) hurt();
+      }
+      if (G.state !== 'playing') return;
+    }
+  }
+
+  // 敵同士の当たり判定
+  const live = G.enemies.filter(e => e.active && !e.dead && (e.state === 'walk' || e.state === 'shell'));
+  for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) {
+    const a = live[i], b = live[j];
+    if (a.state === 'flip' || b.state === 'flip' || !overlap(a, b)) continue;
+    const am = a.state === 'shell' && a.moving, bm = b.state === 'shell' && b.moving;
+    if (am && bm) { flipKill(a, 500); flipKill(b, 500); }
+    else if (am) flipKill(b, 500);
+    else if (bm) flipKill(a, 500);
+    else {
+      if (a.state === 'walk') a.dir = a.x < b.x ? -1 : 1;
+      if (b.state === 'walk') b.dir = b.x < a.x ? -1 : 1;
+    }
+  }
+  G.enemies = G.enemies.filter(e => !e.dead);
+}
+
+function updateItems() {
+  const p = G.player;
+  for (const it of G.items) {
+    if (it.emerge > 0) { it.y -= 0.5; it.emerge--; continue; }
+    it.vx = it.dir * 1.1;
+    it.vy = Math.min(it.vy + 0.4, 6);
+    if (moveX(it)) it.dir = -it.dir;
+    moveY(it);
+    if (it.y > VH + 16) it.dead = true;
+    if (!p.dead && overlap(p, it)) { it.dead = true; powerUp(it); }
+  }
+  G.items = G.items.filter(i => !i.dead);
+}
+
+function updateFx() {
+  for (const [k, t] of G.bumps) { if (t >= 10) G.bumps.delete(k); else G.bumps.set(k, t + 1); }
+  for (const f of G.fx) {
+    f.y += f.vy; f.vy += 0.35; f.t++;
+    if (f.t >= 28) { f.dead = true; G.popups.push({ text: '200', x: f.x, y: f.y, t: 0 }); }
+  }
+  G.fx = G.fx.filter(f => !f.dead);
+  for (const q of G.particles) { q.x += q.vx; q.y += q.vy; q.vy += 0.35; q.t++; }
+  G.particles = G.particles.filter(q => q.y < VH + 16);
+  for (const q of G.popups) { q.y -= 0.6; q.t++; }
+  G.popups = G.popups.filter(q => q.t < 45);
+}
+
+function updateCamera() {
+  const p = G.player;
+  const target = p.x + p.w / 2 - VW * 0.42;
+  const maxX = G.level.w * TILE - VW;
+  if (target > G.cam.x) G.cam.x = Math.min(target, maxX);
+}
+
+function startFlag() {
+  const p = G.player, poleX = G.level.flagX * TILE + 8;
+  stopMusic(); SFX.flag();
+  p.vx = 0; p.vy = 0; p.x = poleX - p.w + 1; p.facing = 1;
+  const h = 12 * TILE - (p.y + p.h);
+  const pts = h > 120 ? 5000 : h > 90 ? 2000 : h > 60 ? 800 : h > 30 ? 400 : 100;
+  addScore(pts, poleX + 4, p.y);
+  G.flag = { phase: 0, y: 3 * TILE + 4, t: 0 };
+  setState('flag');
+}
+
+function updateFlag() {
+  const p = G.player, f = G.flag, base = 12 * TILE;
+  f.t++;
+  if (f.phase === 0) {                                  // ポールをすべり降りる
+    let done = true;
+    if (p.y + p.h < base) { p.y = Math.min(p.y + 2, base - p.h); done = false; }
+    if (f.y < base - 18) { f.y += 2; done = false; }
+    if (done) { f.phase = 1; f.t = 0; }
+  } else if (f.phase === 1) {
+    if (f.t > 24) { f.phase = 2; f.t = 0; p.x += 10; SFX.clear(); }
+  } else if (f.phase === 2) {                           // 城まで歩く
+    p.vx = 1.2; p.vy = Math.min(p.vy + 0.62, 7);
+    moveX(p); moveY(p); p.anim += p.vx;
+    updateCamera();
+    if (p.x + p.w / 2 >= G.level.castleX * TILE + 40) { p.hidden = true; f.phase = 3; f.t = 0; }
+  } else if (f.phase === 3) {                           // 残りタイムをスコアに加算
+    if (G.time > 0) {
+      const n = Math.min(G.time, 2); G.time -= n; G.score += n * 50;
+      if (f.t % 4 === 0) SFX.tick();
+    } else if (f.t > 60) {
+      saveBest(); setState('clear');
+    }
+  }
+}
+
+function saveBest() {
+  if (G.score > G.best) { G.best = G.score; try { localStorage.setItem('pico-best', G.best); } catch (e) {} }
+}
+
+function update() {
+  G.frame++;
+  G.stateTimer++;
+  if (G.jumpBuf > 0) G.jumpBuf--;
+  switch (G.state) {
+    case 'title':
+      if (G.action) startGame();
+      break;
+    case 'intro':
+      if (G.stateTimer >= 130) { setState('playing'); startMusic(); }
+      break;
+    case 'playing': {
+      const p = G.player;
+      if (p.growT > 0) { p.growT--; updateFx(); break; }
+      if (--G.timeTick <= 0) {
+        G.timeTick = 24; G.time--;
+        if (G.time === 100) { SFX.hurry(); music.fast = true; }
+        if (G.time <= 0) { G.time = 0; killPlayer(false); break; }
+      }
+      updatePlayer();
+      if (G.state === 'playing') updateEnemies();
+      if (G.state === 'playing') {
+        updateItems(); updateCamera();
+        if (!G.checkpoint && p.x > 90 * TILE) G.checkpoint = true;
+        if (p.x + p.w >= G.level.flagX * TILE - 1) startFlag();
+      }
+      updateFx();
+      break;
+    }
+    case 'dying': {
+      const p = G.player;
+      if (!p.pit) {
+        if (G.stateTimer === 30) p.vy = -6.5;
+        if (G.stateTimer > 30) { p.vy += 0.3; p.y += p.vy; }
+      }
+      updateFx();
+      if (G.stateTimer >= 170) {
+        G.lives--;
+        if (G.lives <= 0) { saveBest(); setState('gameover'); SFX.gameover(); }
+        else loadLevel();
+      }
+      break;
+    }
+    case 'flag':
+      updateFlag(); updateFx();
+      break;
+    case 'clear':
+    case 'gameover':
+      if ((G.stateTimer > 60 && G.action) || (G.state === 'gameover' && G.stateTimer > 420)) toTitle();
+      G.action = false;
+      break;
+  }
+}
+
+function toTitle() {
+  G.checkpoint = false;
+  G.level = buildLevel();
+  G.player = newPlayer(3 * TILE);
+  G.enemies = G.level.enemies.map(spawnEnemy);
+  G.items = []; G.fx = []; G.particles = []; G.popups = []; G.bumps = new Map();
+  G.cam.x = 0;
+  setState('title');
+}
+
+// =====================================================================
+//  描画
+// =====================================================================
+function txt(s, x, y, col = '#fff', size = 8, align = 'left') {
+  ctx.font = size + 'px "Press Start 2P", monospace';
+  ctx.textAlign = align; ctx.textBaseline = 'top';
+  ctx.fillStyle = '#000'; ctx.fillText(s, x + 1, y + 1);
+  ctx.fillStyle = col; ctx.fillText(s, x, y);
+}
+function jtxt(s, x, y, col = '#fff', size = 10, align = 'left') {
+  ctx.font = size + 'px "DotGothic16", sans-serif';
+  ctx.textAlign = align; ctx.textBaseline = 'top';
+  ctx.fillStyle = '#000'; ctx.fillText(s, x + 1, y + 1);
+  ctx.fillStyle = col; ctx.fillText(s, x, y);
+}
+function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+
+function drawCoin(x, y, phase) {
+  const w = [8, 6, 2, 6][phase % 4];
+  const cx = x + 8;
+  ctx.fillStyle = '#9a6400'; ctx.fillRect(Math.round(cx - w / 2), y + 2, w, 12);
+  if (w > 2) {
+    ctx.fillStyle = '#ffcc00'; ctx.fillRect(Math.round(cx - w / 2) + 1, y + 3, w - 2, 10);
+    ctx.fillStyle = '#fff6a8'; ctx.fillRect(Math.round(cx - w / 2) + 1, y + 4, 1, 6);
+  }
+}
+
+function drawCloud(x, y, s) {
+  ctx.fillStyle = '#dbe8ff';
+  circle(x, y + 2, 7 * s); circle(x + 9 * s, y - 3 * s, 9 * s); circle(x + 19 * s, y, 8 * s); circle(x + 27 * s, y + 3 * s, 6 * s);
+  ctx.fillStyle = '#fff';
+  circle(x, y, 7 * s); circle(x + 9 * s, y - 5 * s, 9 * s); circle(x + 19 * s, y - 2 * s, 8 * s); circle(x + 27 * s, y + 1 * s, 6 * s);
+}
+function drawHill(x, base, r, col, dark) {
+  ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(x, base, r + 1, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, base, r, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = dark;
+  ctx.fillRect(Math.round(x - r * 0.35), Math.round(base - r * 0.55), 3, 6);
+  ctx.fillRect(Math.round(x + r * 0.15), Math.round(base - r * 0.4), 3, 6);
+}
+function drawBush(x, y) {
+  ctx.fillStyle = '#2a8a32';
+  circle(x + 8, y - 6, 9); circle(x + 20, y - 10, 11); circle(x + 32, y - 6, 9);
+  ctx.fillStyle = '#4ccf4c';
+  circle(x + 8, y - 7, 8); circle(x + 20, y - 11, 10); circle(x + 32, y - 7, 8);
+}
+
+function drawBackground(cx) {
+  ctx.fillStyle = '#5c94fc'; ctx.fillRect(0, 0, VW, VH);
+  // 雲（遠景）
+  const CL = [[30, 40, 1], [150, 26, 1.3], [270, 56, 0.9]];
+  let off = cx * 0.3;
+  for (let k = Math.floor((off - 80) / 360); k <= Math.floor((off + VW) / 360); k++)
+    for (const c of CL) { const x = k * 360 + c[0] - off; if (x > -60 && x < VW + 20) drawCloud(x, c[1], c[2]); }
+  // 丘（中景）
+  off = cx * 0.55;
+  for (let k = Math.floor((off - 120) / 520); k <= Math.floor((off + VW + 120) / 520); k++) {
+    drawHill(k * 520 + 90 - off, 208, 64, '#4bb35a', '#2e7d3c');
+    drawHill(k * 520 + 330 - off, 208, 38, '#58c466', '#2e7d3c');
+  }
+  // しげみ（近景）
+  for (let i = 0; i < 24; i++) {
+    const bx = i * 150 + ((i * 37) % 60) + 40;
+    if (bx + 40 < cx || bx > cx + VW) continue;
+    if (tileGet(Math.floor(bx / TILE), 13) !== T.GROUND || tileGet(Math.floor((bx + 40) / TILE), 13) !== T.GROUND) continue;
+    drawBush(bx - cx, 208);
+  }
+}
+
+function drawCastle(cx) {
+  const x = G.level.castleX * TILE - cx, by = 208;
+  if (x > VW || x < -100) return;
+  ctx.fillStyle = '#b8521a';
+  ctx.fillRect(x, by - 48, 80, 48); ctx.fillRect(x + 16, by - 80, 48, 32);
+  for (let i = 0; i < 5; i++) ctx.fillRect(x + i * 16 + 4, by - 56, 8, 8);
+  for (let i = 0; i < 3; i++) ctx.fillRect(x + 16 + i * 16 + 4, by - 88, 8, 8);
+  ctx.fillStyle = '#5a2408';
+  for (let yy = by - 48, r = 0; yy < by; yy += 8, r++) {
+    ctx.fillRect(x, yy, 80, 1);
+    for (let xx = (r % 2) * 8; xx < 80; xx += 16) ctx.fillRect(x + xx, yy, 1, 8);
+  }
+  for (let yy = by - 80, r = 0; yy < by - 48; yy += 8, r++) {
+    ctx.fillRect(x + 16, yy, 48, 1);
+    for (let xx = (r % 2) * 8; xx < 48; xx += 16) ctx.fillRect(x + 16 + xx, yy, 1, 8);
+  }
+  ctx.fillStyle = '#000';
+  ctx.fillRect(x + 28, by - 72, 6, 12); ctx.fillRect(x + 46, by - 72, 6, 12);
+  ctx.fillRect(x + 32, by - 20, 16, 20);
+  ctx.beginPath(); ctx.arc(x + 40, by - 20, 8, Math.PI, 0); ctx.fill();
+}
+
+function drawFlag(cx) {
+  const px = G.level.flagX * TILE + 8 - cx;
+  if (px < -40 || px > VW + 20) return;
+  ctx.fillStyle = '#9bd36a'; ctx.fillRect(px - 1, 48, 2, 144);
+  ctx.fillStyle = '#2e7d3c'; circle(px, 45, 4);
+  const fy = G.state === 'flag' || G.state === 'clear' ? G.flag.y : 3 * TILE + 4;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.moveTo(px - 1, fy); ctx.lineTo(px - 1, fy + 14); ctx.lineTo(px - 18, fy + 7); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#e2482b'; circle(px - 6, fy + 7, 2.5);
+}
+
+function drawTile(t, x, y, tx, ty) {
+  let img = null;
+  switch (t) {
+    case T.GROUND: img = tileGet(tx, ty - 1) === T.GROUND ? TILES.ground : TILES.groundTop; break;
+    case T.BRICK: case T.BCOIN: img = TILES.brick; break;
+    case T.QCOIN: case T.QPOW: img = TILES.q[[0, 0, 0, 0, 1, 1, 2, 2][Math.floor(G.frame / 8) % 8]]; break;
+    case T.USED: img = TILES.used; break;
+    case T.HARD: img = TILES.hard; break;
+    case T.PTL: img = TILES.pipeTL; break;
+    case T.PTR: img = TILES.pipeTR; break;
+    case T.PL: img = TILES.pipeL; break;
+    case T.PR: img = TILES.pipeR; break;
+    case T.COIN: drawCoin(x, y, Math.floor(G.frame / 8)); return;
+  }
+  if (img) ctx.drawImage(img, x, y);
+}
+
+function drawSprite(img, e, cx, flipV) {
+  const x = Math.round(e.x - (img.width - e.w) / 2 - cx);
+  const y = Math.round(e.y + e.h - img.height);
+  if (flipV) {
+    ctx.save(); ctx.translate(x, y + img.height); ctx.scale(1, -1); ctx.drawImage(img, 0, 0); ctx.restore();
+  } else ctx.drawImage(img, x, y);
+}
+
+function drawEnemy(e, cx) {
+  if (e.x > cx + VW + 16 || e.x + e.w < cx - 16) return;
+  const flipV = e.state === 'flip';
+  if (e.type === 's') {
+    if (e.state === 'squish') drawSprite(SPR_SLIME_FLAT, e, cx);
+    else drawSprite(SPR_SLIME[Math.floor(e.anim / 12) % 2], e, cx, flipV);
+  } else {
+    if (e.state === 'shell' || (flipV && e.h === 14)) {
+      let dx = 0;
+      if (e.state === 'shell' && !e.moving && e.wake > 320) dx = (G.frame >> 2) % 2 ? 1 : -1;
+      drawSprite(SPR_SHELL, { x: e.x + dx, y: e.y, w: e.w, h: e.h }, cx, flipV);
+    } else {
+      drawSprite(SPR_BEETLE[Math.floor(e.anim / 10) % 2][e.dir < 0 ? 0 : 1], e, cx, flipV);
+    }
+  }
+}
+
+function drawPlayer(cx) {
+  const p = G.player;
+  if (!p || p.hidden) return;
+  if (p.inv > 0 && p.growT <= 0 && (G.frame >> 2) % 2) return;
+  let set = p.big ? SPR_P.big : SPR_P.small;
+  if (p.growT > 0) set = ((p.growT >> 2) % 2) ? SPR_P.big : SPR_P.small;
+  let frame = 'stand';
+  if (p.dead || G.state === 'flag' && G.flag.phase < 2) frame = 'jump';
+  else if (!p.onGround) frame = 'jump';
+  else if (Math.abs(p.vx) > 0.15) frame = ['w1', 'stand', 'w2', 'stand'][Math.floor(p.anim / 7) % 4];
+  const img = set[frame][p.facing > 0 ? 0 : 1];
+  drawSprite(img, p, cx);
+}
+
+function drawWorld() {
+  const cx = Math.round(G.cam.x);
+  drawBackground(cx);
+  drawCastle(cx);
+  drawFlag(cx);
+  for (const it of G.items) drawSprite(SPR_APPLE, it, cx);
+  const x0 = Math.floor(cx / TILE);
+  for (let ty = 0; ty < G.level.h; ty++) {
+    for (let tx = x0; tx <= x0 + 21; tx++) {
+      const t = tileGet(tx, ty);
+      if (!t) continue;
+      let oy = 0;
+      const b = G.bumps.get(ty * 1000 + tx);
+      if (b !== undefined) oy = -Math.round(Math.sin(b / 10 * Math.PI) * 5);
+      drawTile(t, tx * TILE - cx, ty * TILE + oy, tx, ty);
+    }
+  }
+  for (const e of G.enemies) drawEnemy(e, cx);
+  drawPlayer(cx);
+  for (const f of G.fx) drawCoin(Math.round(f.x - cx), Math.round(f.y), Math.floor(f.t / 3));
+  for (const q of G.particles) {
+    ctx.fillStyle = '#2a1206'; ctx.fillRect(Math.round(q.x - cx), Math.round(q.y), 6, 6);
+    ctx.fillStyle = '#c4581c'; ctx.fillRect(Math.round(q.x - cx) + 1, Math.round(q.y) + 1, 4, 4);
+  }
+  for (const q of G.popups) txt(q.text, Math.round(q.x - cx), Math.round(q.y), '#fff', 6);
+}
+
+function drawHUD() {
+  txt('PICO', 16, 8);
+  txt(String(G.score).padStart(6, '0'), 16, 18);
+  ctx.drawImage(SPR_HEART, 96, 8);
+  txt('x' + G.lives, 106, 8);
+  drawCoin(88, 15, 0);
+  txt('x' + String(G.coins).padStart(2, '0'), 106, 18);
+  txt('WORLD', 168, 8); txt('1-1', 176, 18);
+  txt('TIME', 248, 8);
+  if (G.state !== 'title') txt(String(Math.max(0, G.time)).padStart(3, '0'), 256, 18, G.time <= 100 ? '#ffb0a0' : '#fff');
+}
+
+function panel(x, y, w, h) {
+  ctx.fillStyle = 'rgba(10, 14, 40, 0.78)'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#fff'; ctx.fillRect(x, y, w, 1); ctx.fillRect(x, y + h - 1, w, 1);
+  ctx.fillRect(x, y, 1, h); ctx.fillRect(x + w - 1, y, 1, h);
+}
+
+function render() {
+  ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  const blink = Math.floor(G.frame / 30) % 2 === 0;
+
+  if (G.state === 'intro' || G.state === 'gameover') {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, VW, VH);
+    drawHUD();
+    if (G.state === 'intro') {
+      txt('WORLD 1-1', 160, 90, '#fff', 10, 'center');
+      ctx.drawImage(SPR_P.small.stand[0], 128, 116);
+      txt('x  ' + G.lives, 152, 122, '#fff', 8, 'left');
+      if (G.checkpoint) jtxt('中間地点からスタート', 160, 150, '#ffd23f', 10, 'center');
+    } else {
+      txt('GAME OVER', 160, 104, '#fff', 12, 'center');
+      txt('SCORE ' + G.score, 160, 130, '#ffd23f', 8, 'center');
+      if (G.stateTimer > 60 && blink) jtxt('Enter / スペースでタイトルへ', 160, 160, '#ccc', 10, 'center');
+    }
+    return;
+  }
+
+  drawWorld();
+  drawHUD();
+
+  if (G.state === 'title') {
+    panel(36, 40, 248, 150);
+    jtxt('ピコ・アドベンチャー', 160, 50, '#ffd23f', 22, 'center');
+    txt('PICO ADVENTURE', 160, 78, '#9fd0ff', 8, 'center');
+    const L = 64;
+    jtxt('← → / A D', L, 98, '#fff'); jtxt('いどう', L + 104, 98, '#fff');
+    jtxt('Z / スペース / ↑', L, 112, '#fff'); jtxt('ジャンプ（長押しで高く）', L + 104, 112, '#fff');
+    jtxt('X / Shift', L, 126, '#fff'); jtxt('ダッシュ', L + 104, 126, '#fff');
+    jtxt('Enter / P', L, 140, '#fff'); jtxt('ポーズ　 M：BGM', L + 104, 140, '#fff');
+    if (blink) txt('PRESS ENTER', 160, 162, '#fff', 8, 'center');
+    if (G.best) txt('HI ' + String(G.best).padStart(6, '0'), 160, 176, '#ffd23f', 6, 'center');
+  } else if (G.state === 'pause') {
+    panel(100, 96, 120, 40);
+    txt('PAUSE', 160, 110, '#fff', 10, 'center');
+  } else if (G.state === 'clear') {
+    panel(56, 64, 208, 96);
+    txt('COURSE CLEAR!', 160, 80, '#ffd23f', 10, 'center');
+    txt('SCORE ' + String(G.score).padStart(6, '0'), 160, 104, '#fff', 8, 'center');
+    txt('HI    ' + String(G.best).padStart(6, '0'), 160, 118, '#fff', 8, 'center');
+    if (G.stateTimer > 60 && blink) jtxt('Enter / スペースでタイトルへ', 160, 138, '#ccc', 10, 'center');
+  }
+}
+
+// =====================================================================
+//  入力
+// =====================================================================
+const KEYMAP = {
+  ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+  Space: 'jump', KeyZ: 'jump', ArrowUp: 'jump', KeyW: 'jump',
+  KeyX: 'run', ShiftLeft: 'run', ShiftRight: 'run',
+};
+function press(a) {
+  initAudio();
+  if (a === 'jump' && !input.jump) { G.jumpBuf = 6; G.action = true; }
+  input[a] = true;
+}
+function release(a) { input[a] = false; }
+function togglePause() {
+  if (G.state === 'playing') { G.prevState = 'playing'; G.state = 'pause'; stopMusic(); SFX.pause(); }
+  else if (G.state === 'pause') { G.state = 'playing'; startMusic(); }
+}
+addEventListener('keydown', e => {
+  const a = KEYMAP[e.code];
+  if (a) { e.preventDefault(); if (!e.repeat) press(a); return; }
+  if (e.code === 'Enter') {
+    e.preventDefault(); initAudio();
+    if (G.state === 'playing' || G.state === 'pause') togglePause(); else G.action = true;
+  } else if (e.code === 'KeyP' || e.code === 'Escape') {
+    togglePause();
+  } else if (e.code === 'KeyM') {
+    music.on = !music.on;
+    if (!music.on) stopMusic(); else if (G.state === 'playing') startMusic();
+  }
+});
+addEventListener('keyup', e => { const a = KEYMAP[e.code]; if (a) release(a); });
+addEventListener('blur', () => { for (const k in input) input[k] = false; });
+
+// タッチ操作
+const touchUI = document.getElementById('touch');
+if ('ontouchstart' in window || matchMedia('(pointer: coarse)').matches) touchUI.classList.add('on');
+touchUI.querySelectorAll('button').forEach(btn => {
+  const k = btn.dataset.k;
+  btn.addEventListener('pointerdown', e => { e.preventDefault(); btn.classList.add('down'); press(k); });
+  const up = e => { e.preventDefault(); btn.classList.remove('down'); release(k); };
+  btn.addEventListener('pointerup', up); btn.addEventListener('pointercancel', up); btn.addEventListener('pointerleave', up);
+  btn.addEventListener('contextmenu', e => e.preventDefault());
+});
+cv.addEventListener('pointerdown', () => {
+  initAudio();
+  if (G.state === 'playing' || G.state === 'pause') togglePause(); else G.action = true;
+});
+
+// =====================================================================
+//  メインループ（60fps 固定ステップ）
+// =====================================================================
+toTitle();
+let last = performance.now(), acc = 0;
+const STEP = 1000 / 60;
+function loop(now) {
+  acc += Math.min(now - last, 100); last = now;
+  while (acc >= STEP) { if (G.state !== 'pause') update(); acc -= STEP; }
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
