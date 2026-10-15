@@ -1,0 +1,1803 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ほしふるまち</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
+<style>
+  /* Layout: one centered column — the TV screen, then a Famicom-style controller below it */
+  :root {
+    --bg: #0d0b14;          /* room in the dark */
+    --tv: #1f1b2a;          /* TV bezel */
+    --pad: #d9cfbd;         /* controller cream */
+    --pad-strip: #7a1f24;   /* controller burgundy strip */
+    --btn: #b8232c;         /* A / B buttons */
+    --ink: #e9e5f2;
+    --muted: #8e88a6;
+    --font-pixel: "DotGothic16", "MS Gothic", "Osaka-Mono", monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-pixel);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 12px;
+    box-sizing: border-box;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 800px; margin: 0 auto; }
+  #tv {
+    background: var(--tv); padding: 10px; border-radius: 14px;
+    box-shadow: 0 0 0 2px #2c2640, 0 18px 40px rgba(0,0,0,.5);
+    width: min(100%, 788px, calc((100dvh - 90px) * 1.0667 + 20px));
+    box-sizing: border-box;
+  }
+  canvas {
+    display: block; width: 100%; max-width: 100%; aspect-ratio: 256 / 240;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    background: #000; border-radius: 4px; outline: none;
+  }
+  #help { color: var(--muted); font-size: 13px; text-align: center; line-height: 1.7; margin: 0; max-width: 60ch; }
+  #help kbd { font-family: var(--font-pixel); color: var(--ink); background: #2a2538; border-radius: 3px; padding: 0 5px; }
+  #pad {
+    display: none; width: min(100%, 520px); box-sizing: border-box;
+    background: var(--pad); border-radius: 16px; padding: 14px 18px;
+    align-items: center; justify-content: space-between; gap: 12px;
+    box-shadow: inset 0 -4px 0 rgba(0,0,0,.15);
+  }
+  .dpad { display: grid; grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(3, 48px); }
+  .dpad button { background: #1d1b22; border: 0; color: #6d6878; font-size: 14px; touch-action: none; }
+  .dpad .u { grid-column: 2; grid-row: 1; border-radius: 6px 6px 0 0; }
+  .dpad .l { grid-column: 1; grid-row: 2; border-radius: 6px 0 0 6px; }
+  .dpad .c { grid-column: 2; grid-row: 2; pointer-events: none; }
+  .dpad .r { grid-column: 3; grid-row: 2; border-radius: 0 6px 6px 0; }
+  .dpad .d { grid-column: 2; grid-row: 3; border-radius: 0 0 6px 6px; }
+  .mid { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .mid .strip { width: 64px; height: 8px; background: var(--pad-strip); border-radius: 4px; }
+  .mid button { background: #4a4552; color: var(--pad); border: 0; border-radius: 10px; font-family: var(--font-pixel); font-size: 11px; padding: 5px 10px; touch-action: none; }
+  .ab { display: flex; gap: 14px; align-items: flex-end; }
+  .ab div { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--pad-strip); font-size: 13px; }
+  .ab button { width: 60px; height: 60px; border-radius: 50%; border: 0; background: var(--btn); box-shadow: 0 4px 0 #6d1016; touch-action: none; }
+  .ab div:first-child { transform: translateY(10px); }
+  button:active, button.on { filter: brightness(1.25); }
+  button:focus-visible { outline: 2px solid #fce0a8; outline-offset: 2px; }
+  @media (pointer: coarse), (max-width: 640px) {
+    #pad { display: flex; }
+    #tv { width: min(100%, 788px, calc((100dvh - 250px) * 1.0667 + 20px)); }
+    #help { display: none; }
+  }
+  @media (max-width: 460px) {
+    #pad { padding: 12px; gap: 6px; }
+    .dpad { grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 40px); }
+    .mid .strip { width: 44px; }
+    .ab { gap: 8px; }
+    .ab button { width: 52px; height: 52px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="tv"><canvas id="screen" width="512" height="480" tabindex="0" aria-label="ゲーム画面"></canvas></div>
+  <div id="pad">
+    <div class="dpad">
+      <button class="u" data-k="up" aria-label="上">▲</button>
+      <button class="l" data-k="left" aria-label="左">◀</button>
+      <button class="c" tabindex="-1" aria-hidden="true"></button>
+      <button class="r" data-k="right" aria-label="右">▶</button>
+      <button class="d" data-k="down" aria-label="下">▼</button>
+    </div>
+    <div class="mid"><div class="strip"></div><button id="muteBtn" type="button">おと ON</button></div>
+    <div class="ab">
+      <div><button data-k="b" aria-label="Bボタン"></button>B</div>
+      <div><button data-k="a" aria-label="Aボタン"></button>A</div>
+    </div>
+  </div>
+  <p id="help">
+    いどう <kbd>↑↓←→</kbd>/<kbd>WASD</kbd>　けってい・はなす <kbd>Z</kbd>/<kbd>Enter</kbd>　メニュー・キャンセル <kbd>X</kbd>/<kbd>Esc</kbd>　おと <kbd>M</kbd>
+  </p>
+</div>
+
+<script>
+'use strict';
+// =====================================================================
+//  ほしふるまち — a tiny Famicom-style RPG (original story & music)
+// =====================================================================
+const cv = document.getElementById('screen');
+const ctx = cv.getContext('2d');
+const W = 256, H = 240, S = 2;
+const FONT = '"DotGothic16", "MS Gothic", monospace';
+
+const rnd = Math.random;
+const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+const OPP = { up: 'down', down: 'up', left: 'right', right: 'left' };
+
+// ---------------------------------------------------------------- palette
+const PAL = {
+  k: '#000000', w: '#fcfcfc', a: '#bcbcbc', d: '#7c7c7c', D: '#3c3c48',
+  r: '#d82800', R: '#881400', o: '#fc7840', y: '#f8b800', Y: '#fce0a8',
+  s: '#fcc4a0', n: '#ac7c00', N: '#503000', e: '#00a800', E: '#58d854',
+  G: '#005800', b: '#0058f8', B: '#0028a0', c: '#3cbcfc', v: '#6844fc',
+  p: '#d800cc', P: '#f878f8', z: '#a4e4fc', m: '#7c2898'
+};
+
+// ================================================================= INPUT
+const KEYMAP = {
+  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+  w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right',
+  z: 'a', Z: 'a', Enter: 'a', ' ': 'a', x: 'b', X: 'b', Escape: 'b', Backspace: 'b'
+};
+const held = {}, pressed = {}, holdT = {};
+let dirOrder = [];
+function press(k) {
+  if (!held[k]) {
+    pressed[k] = true; holdT[k] = 0;
+    if (DIRS[k]) { dirOrder = dirOrder.filter(d => d !== k); dirOrder.push(k); }
+  }
+  held[k] = true;
+}
+function release(k) { held[k] = false; dirOrder = dirOrder.filter(d => d !== k); }
+function hit(k) { if (pressed[k]) { pressed[k] = false; return true; } return false; }
+function rep(k) { if (hit(k)) return true; return held[k] && holdT[k] > 16 && holdT[k] % 5 === 0; }
+function heldDir() { for (let i = dirOrder.length - 1; i >= 0; i--) if (held[dirOrder[i]]) return dirOrder[i]; return null; }
+
+window.addEventListener('keydown', e => {
+  initAudio();
+  if (e.key === 'm' || e.key === 'M') { toggleMute(); return; }
+  const k = KEYMAP[e.key]; if (!k) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  press(k);
+});
+window.addEventListener('keyup', e => { const k = KEYMAP[e.key]; if (k) release(k); });
+window.addEventListener('blur', () => { for (const k in held) release(k); });
+cv.addEventListener('pointerdown', () => { initAudio(); cv.focus(); });
+document.querySelectorAll('#pad [data-k]').forEach(btn => {
+  const k = btn.dataset.k;
+  const down = e => { e.preventDefault(); initAudio(); press(k); btn.classList.add('on'); };
+  const up = e => { e.preventDefault(); release(k); btn.classList.remove('on'); };
+  btn.addEventListener('pointerdown', down);
+  btn.addEventListener('pointerup', up);
+  btn.addEventListener('pointercancel', up);
+  btn.addEventListener('pointerleave', up);
+  btn.addEventListener('contextmenu', e => e.preventDefault());
+});
+const muteBtn = document.getElementById('muteBtn');
+muteBtn.addEventListener('click', () => { initAudio(); toggleMute(); });
+
+// ================================================================= AUDIO
+let AC = null, master = null, musicBus = null, sfxBus = null, noiseBuf = null;
+const waves = {};
+let muted = false;
+try { muted = localStorage.getItem('hoshifuru_mute') === '1'; } catch (e) {}
+function updateMuteLabel() { muteBtn.textContent = muted ? 'おと OFF' : 'おと ON'; }
+updateMuteLabel();
+function toggleMute() {
+  muted = !muted; updateMuteLabel();
+  try { localStorage.setItem('hoshifuru_mute', muted ? '1' : '0'); } catch (e) {}
+  if (master) master.gain.setTargetAtTime(muted ? 0 : 0.5, AC.currentTime, 0.02);
+}
+function pulseWave(duty) {
+  const n = 40, re = new Float32Array(n), im = new Float32Array(n);
+  for (let k = 1; k < n; k++) re[k] = (2 / (k * Math.PI)) * Math.sin(k * Math.PI * duty);
+  return AC.createPeriodicWave(re, im);
+}
+function initAudio() {
+  if (AC) { if (AC.state === 'suspended') AC.resume(); return; }
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  try { AC = new Ctx(); } catch (e) { AC = null; return; }
+  master = AC.createGain(); master.gain.value = muted ? 0 : 0.5; master.connect(AC.destination);
+  musicBus = AC.createGain(); musicBus.gain.value = 0.2; musicBus.connect(master);
+  sfxBus = AC.createGain(); sfxBus.gain.value = 0.28; sfxBus.connect(master);
+  noiseBuf = AC.createBuffer(1, AC.sampleRate, AC.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  waves.p12 = pulseWave(0.125); waves.p25 = pulseWave(0.25); waves.p50 = pulseWave(0.5);
+  setInterval(musicTick, 25);
+  if (curSong) { const s = curSong; curSong = null; playSong(s); }
+}
+
+const b8 = (...roots) => roots.map(r => `${r}2:1 ${r}3:1 `.repeat(4)).join(' ');
+const SONGS = {
+  title: { bpm: 84, loop: true, ch: [
+    { w: 'p25', v: .5, n: 'C5:2 F5:2 A5:3 G5:1 F5:2 C5:2 D5:4 A#4:2 D5:2 F5:3 E5:1 D5:2 C5:2 C5:4 C5:2 F5:2 A5:3 G5:1 F5:2 A5:2 C6:4 A#5:2 A5:2 G5:2 E5:2 F5:8' },
+    { w: 'p12', v: .22, n: 'A4:8 F4:8 F4:8 E4:8 A4:8 E4:8 D4:4 E4:4 A4:8' },
+    { w: 'tri', v: .75, n: 'F2:2 C3:2 F3:2 C3:2 D2:2 A2:2 D3:2 A2:2 A#2:2 F3:2 A#3:2 F3:2 C3:2 G3:2 C4:2 G3:2 F2:2 C3:2 F3:2 C3:2 A2:2 E3:2 A3:2 E3:2 A#2:2 F3:2 C3:2 G3:2 F2:2 C3:2 F3:2 r:2' }
+  ]},
+  town: { bpm: 104, loop: true, ch: [
+    { w: 'p25', v: .45, n: 'E5:2 G5:2 C6:3 B5:1 A5:2 G5:2 E5:4 F5:2 A5:2 G5:2 E5:2 D5:6 r:2 E5:2 G5:2 C6:3 B5:1 A5:2 G5:2 E5:2 C5:2 D5:2 E5:2 F5:2 D5:2 C5:6 r:2' },
+    { w: 'p12', v: .22, n: 'E4:8 E4:8 F4:8 D4:8 E4:8 C4:8 D4:8 E4:8' },
+    { w: 'tri', v: .75, n: 'C3:2 G3:2 C4:2 G3:2 A2:2 E3:2 A3:2 E3:2 F2:2 C3:2 F3:2 C3:2 G2:2 D3:2 G3:2 D3:2 C3:2 G3:2 C4:2 G3:2 A2:2 E3:2 A3:2 E3:2 G2:2 D3:2 G3:2 D3:2 C3:2 G3:2 C4:2 r:2' },
+    { w: 'noise', v: .25, n: 'x:2 x:2 x:2 x:2 '.repeat(8) }
+  ]},
+  field: { bpm: 132, loop: true, ch: [
+    { w: 'p25', v: .45, n: 'G4:1 A4:1 B4:2 D5:2 B4:1 D5:1 E5:2 D5:2 B4:4 C5:2 B4:1 A4:1 G4:2 A4:2 B4:2 A4:2 D4:4 G4:1 A4:1 B4:2 D5:2 G5:2 F#5:2 E5:2 D5:4 E5:2 D5:1 C5:1 B4:2 A4:2 G4:6 r:2' },
+    { w: 'p12', v: .2, n: 'D4:4 G4:4 B3:4 E4:4 E4:4 G4:4 F#4:4 A4:4 D4:4 G4:4 A4:4 F#4:4 G4:4 E4:4 D4:4 B3:4' },
+    { w: 'tri', v: .7, n: b8('G', 'E', 'C', 'D', 'G', 'D', 'C', 'G') },
+    { w: 'noise', v: .45, n: 'k:1 x:1 X:1 x:1 k:1 k:1 X:1 x:1 '.repeat(8) }
+  ]},
+  cave: { bpm: 92, loop: true, ch: [
+    { w: 'p25', v: .32, n: 'E4:4 G4:2 F#4:2 E4:4 B3:4 C4:4 D4:2 E4:2 D#4:8 E4:4 G4:2 A4:2 B4:4 A4:2 G4:2 F#4:4 D#4:4 E4:8' },
+    { w: 'p12', v: .14, n: 'r:1 E5:4 G5:2 F#5:2 E5:4 B4:4 C5:4 D5:2 E5:2 D#5:8 E5:4 G5:2 A5:2 B5:4 A5:2 G5:2 F#5:4 D#5:4 E5:7' },
+    { w: 'tri', v: .75, n: 'E2:8 E2:8 A2:8 B2:8 E2:8 G2:8 B2:8 E2:8' },
+    { w: 'noise', v: .2, n: 'k:4 r:4 '.repeat(8) }
+  ]},
+  battle: { bpm: 164, loop: true, ch: [
+    { w: 'p25', v: .45, n: 'A4:1 C5:1 E5:1 A5:1 G5:1 E5:1 C5:1 E5:1 F5:1 E5:1 D5:1 C5:1 B4:2 G4:2 A4:1 C5:1 E5:1 A5:1 B5:1 A5:1 G5:1 E5:1 F5:2 E5:2 D#5:2 E5:2 C6:2 B5:1 A5:1 G5:2 E5:2 F5:2 E5:1 D5:1 C5:2 A4:2 B4:1 C5:1 D5:1 E5:1 F5:1 G5:1 A5:1 B5:1 A5:4 E5:4' },
+    { w: 'p12', v: .2, n: 'E4:2 E4:2 E4:2 E4:2 D4:2 D4:2 D4:2 D4:2 E4:2 E4:2 E4:2 E4:2 B3:2 B3:2 B3:2 B3:2 E4:2 E4:2 E4:2 E4:2 C4:2 C4:2 C4:2 C4:2 D4:2 D4:2 D4:2 D4:2 C4:2 C4:2 B3:2 B3:2' },
+    { w: 'tri', v: .75, n: b8('A', 'G', 'A', 'E', 'A', 'F', 'G', 'E') },
+    { w: 'noise', v: .5, n: 'k:1 x:1 X:1 x:1 k:1 k:1 X:1 x:1 '.repeat(8) }
+  ]},
+  boss: { bpm: 152, loop: true, ch: [
+    { w: 'p25', v: .45, n: 'E4:1 E4:1 G4:1 E4:1 A#4:1 A4:1 G4:1 F#4:1 E4:1 E4:1 G4:1 E4:1 A#4:1 A4:1 G4:1 F#4:1 E5:2 D#5:2 D5:2 C#5:2 C5:2 B4:2 A#4:2 B4:2 E4:1 G4:1 B4:1 E5:1 F5:2 E5:2 D5:1 C5:1 B4:1 A4:1 G4:2 F#4:2 E4:1 G4:1 B4:1 E5:1 G5:2 F#5:2 F5:2 D#5:2 E5:4' },
+    { w: 'p12', v: .2, n: 'B3:8 B3:8 G4:8 F#4:8 B3:8 F#4:8 B4:8 B3:8' },
+    { w: 'tri', v: .8, n: b8('E', 'E', 'C', 'B', 'E', 'D', 'E', 'B') },
+    { w: 'noise', v: .5, n: 'k:1 k:1 X:1 k:1 k:1 x:1 X:1 X:1 '.repeat(8) }
+  ]},
+  win: { bpm: 150, loop: false, ch: [
+    { w: 'p25', v: .5, n: 'C5:1 E5:1 G5:1 C6:3 r:1 A#5:1 C6:4' },
+    { w: 'p12', v: .3, n: 'G4:1 C5:1 E5:1 G5:3 r:1 F5:1 G5:4' },
+    { w: 'tri', v: .75, n: 'C3:4 G3:2 r:2 C3:4' }
+  ]},
+  lvup: { bpm: 160, loop: false, ch: [
+    { w: 'p25', v: .5, n: 'G5:1 A5:1 B5:1 D6:1 G6:4' },
+    { w: 'tri', v: .7, n: 'G3:4 D3:4' }
+  ]},
+  lose: { bpm: 80, loop: false, ch: [
+    { w: 'p25', v: .5, n: 'E4:2 D#4:2 D4:2 C#4:6' },
+    { w: 'tri', v: .7, n: 'A2:12' }
+  ]},
+  heal: { bpm: 140, loop: false, ch: [
+    { w: 'p25', v: .5, n: 'C5:1 E5:1 G5:1 C6:1 E6:1 r:1 C6:4' },
+    { w: 'tri', v: .6, n: 'C3:4 G3:2 C4:4' }
+  ]},
+  item: { bpm: 170, loop: false, ch: [
+    { w: 'p25', v: .5, n: 'A5:1 C#6:1 E6:1 A6:3' },
+    { w: 'tri', v: .6, n: 'A3:3 E3:3' }
+  ]}
+};
+function noteFreq(n) {
+  const m = /^([A-G])(#|b)?(\d)$/.exec(n);
+  if (!m) return null;
+  const base = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0);
+  const midi = base + (parseInt(m[3], 10) + 1) * 12;
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+function parseSeq(s) {
+  return s.trim().split(/\s+/).filter(t => t && t !== '|').map(t => {
+    const [n, l] = t.split(':');
+    const len = l ? parseFloat(l) : 1;
+    if (n === 'r') return { f: null, len };
+    if (n === 'x' || n === 'X' || n === 'k') return { f: 0, dr: n, len };
+    return { f: noteFreq(n), len };
+  });
+}
+function songUnits(def) { return Math.max(...def.ch.map(c => parseSeq(c.n).reduce((a, e) => a + e.len, 0))); }
+
+let curSong = null, song = null;
+function playSong(name, force) {
+  if (!force && curSong === name) return;
+  curSong = name;
+  if (!AC) return;
+  stopSongNodes();
+  if (!name) return;
+  const def = SONGS[name];
+  const g = AC.createGain(); g.connect(musicBus);
+  const t0 = AC.currentTime + 0.06;
+  song = { def, g, unit: 60 / def.bpm / 2, chs: def.ch.map(c => ({ c, seq: parseSeq(c.n), i: 0, t: t0, end: false })) };
+}
+function stopSongNodes() {
+  if (!song) return;
+  const g = song.g;
+  try { g.gain.setTargetAtTime(0, AC.currentTime, 0.03); } catch (e) {}
+  setTimeout(() => { try { g.disconnect(); } catch (e) {} }, 400);
+  song = null;
+}
+function stopSong() { curSong = null; stopSongNodes(); }
+function jingleFrames(name) { const d = SONGS[name]; return Math.ceil(songUnits(d) * (60 / d.bpm / 2) * 60) + 6; }
+function musicTick() {
+  if (!song) return;
+  const now = AC.currentTime;
+  if (song.chs.some(c => !c.end && c.t < now - 0.25)) song.chs.forEach(c => { c.i = 0; c.t = now + 0.05; });
+  for (const ch of song.chs) {
+    while (!ch.end && ch.t < now + 0.15) {
+      const ev = ch.seq[ch.i];
+      const dur = ev.len * song.unit;
+      if (ev.f !== null) playNote(ch.c, ev, ch.t, dur, song.g);
+      ch.t += dur; ch.i++;
+      if (ch.i >= ch.seq.length) { if (song.def.loop) ch.i = 0; else ch.end = true; }
+    }
+  }
+}
+function playNote(c, ev, t, dur, dest) {
+  const g = AC.createGain(); g.connect(dest);
+  if (ev.dr) {
+    const src = AC.createBufferSource(); src.buffer = noiseBuf;
+    const f = AC.createBiquadFilter();
+    const cfg = { x: ['highpass', 7000, 0.04, 0.45], X: ['bandpass', 1800, 0.13, 0.9], k: ['lowpass', 200, 0.12, 1.8] }[ev.dr];
+    f.type = cfg[0]; f.frequency.value = cfg[1];
+    g.gain.setValueAtTime((c.v || .5) * cfg[3], t);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + cfg[2]);
+    src.connect(f); f.connect(g);
+    src.start(t, Math.random() * 0.5, cfg[2] + 0.02);
+    return;
+  }
+  const o = AC.createOscillator();
+  if (c.w === 'tri') o.type = 'triangle'; else o.setPeriodicWave(waves[c.w] || waves.p50);
+  o.frequency.value = ev.f;
+  const v = c.v || .5, end = t + dur * 0.92;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(v, t + 0.004);
+  if (c.w === 'tri') {
+    g.gain.setValueAtTime(v, Math.max(t + 0.005, end - 0.012));
+    g.gain.linearRampToValueAtTime(0, end);
+  } else {
+    const t1 = t + Math.min(dur * 0.5, 0.2);
+    g.gain.linearRampToValueAtTime(v * 0.7, t1);
+    g.gain.linearRampToValueAtTime(0, Math.max(t1 + 0.005, end));
+  }
+  o.connect(g); o.start(t); o.stop(end + 0.03);
+}
+function tone(t, w, f0, f1, dur, v) {
+  const o = AC.createOscillator(), g = AC.createGain();
+  if (w === 'tri') o.type = 'triangle'; else o.setPeriodicWave(waves[w]);
+  o.frequency.setValueAtTime(f0, t);
+  if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(v, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t + dur + 0.02);
+}
+function nz(t, dur, v, type, freq) {
+  const s = AC.createBufferSource(); s.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+  const g = AC.createGain();
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  s.connect(f); f.connect(g); g.connect(sfxBus); s.start(t, 0, dur + 0.02);
+}
+function sfx(n) {
+  if (!AC) return;
+  const t = AC.currentTime + 0.005;
+  switch (n) {
+    case 'cur': tone(t, 'p25', 1400, 0, 0.04, 0.22); break;
+    case 'ok': tone(t, 'p25', 1000, 0, 0.04, 0.22); tone(t + 0.04, 'p25', 1500, 0, 0.06, 0.22); break;
+    case 'text': tone(t, 'p12', 700 + Math.random() * 120, 0, 0.02, 0.1); break;
+    case 'buzz': tone(t, 'p50', 140, 100, 0.15, 0.3); break;
+    case 'hit': nz(t, 0.15, 0.9, 'highpass', 1200); tone(t, 'p50', 500, 60, 0.12, 0.3); break;
+    case 'smash': nz(t, 0.35, 1, 'lowpass', 3000); tone(t, 'p25', 1600, 80, 0.3, 0.4); break;
+    case 'hurt': nz(t, 0.3, 1, 'lowpass', 900); tone(t, 'p50', 220, 50, 0.25, 0.4); break;
+    case 'miss': tone(t, 'p12', 500, 1200, 0.12, 0.3); break;
+    case 'heal': [523, 659, 784, 1047, 1319].forEach((f, i) => tone(t + i * 0.05, 'p25', f, 0, 0.12, 0.2)); break;
+    case 'enc': for (let i = 0; i < 7; i++) tone(t + i * 0.07, 'p50', 1300 - i * 150, 300 - i * 30, 0.07, 0.25); break;
+    case 'door': tone(t, 'p25', 300, 0, 0.06, 0.25); tone(t + 0.07, 'p25', 220, 0, 0.08, 0.25); break;
+    case 'defeat': tone(t, 'p50', 900, 40, 0.45, 0.3); nz(t, 0.4, 0.4, 'highpass', 500); break;
+    case 'fire': nz(t, 0.6, 0.8, 'bandpass', 600); tone(t, 'p50', 200, 600, 0.5, 0.15); break;
+    case 'bolt': nz(t, 0.5, 1, 'highpass', 300); for (let i = 0; i < 4; i++) tone(t + i * 0.08, 'p12', 2000, 100, 0.08, 0.25); break;
+    case 'bomb': nz(t, 0.7, 1, 'lowpass', 600); tone(t, 'p50', 120, 40, 0.5, 0.4); break;
+    case 'psi': for (let i = 0; i < 8; i++) tone(t + i * 0.04, 'p12', 600 + i * 120, 0, 0.05, 0.15); break;
+    case 'step': tone(t, 'p12', 180, 90, 0.03, 0.08); break;
+  }
+}
+
+// =============================================================== SPRITES
+function mkSprite(rows, map = {}) {
+  const c = document.createElement('canvas');
+  c.width = 16; c.height = 16;
+  const g = c.getContext('2d');
+  for (let y = 0; y < 16; y++) {
+    const row = (rows[y] || '').padEnd(16, '.');
+    for (let x = 0; x < 16; x++) {
+      let ch = row[x];
+      if (map[ch] !== undefined) ch = map[ch];
+      if (ch === '.' || ch === ' ') continue;
+      g.fillStyle = PAL[ch] || ch; g.fillRect(x, y, 1, 1);
+    }
+  }
+  return c;
+}
+function flipH(src) {
+  const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+  const g = c.getContext('2d'); g.translate(src.width, 0); g.scale(-1, 1); g.drawImage(src, 0, 0);
+  return c;
+}
+
+const BODY_DOWN = [
+  '...kCCCCCCCCk...',
+  '..ksCCCCCCCCsk..',
+  '..ksCCCCCCCCsk..',
+  '...kPPPPPPPPk...'];
+const LEGS = {
+  down: [['...kPPk..kPPk...', '...kkk....kkk...'], ['....kPPkkPPk....', '....kkk..kkk....']],
+  left: [['....kPPkPPk.....', '....kkk.kkk.....'], ['....kPPPPk......', '....kkkkk.......']]
+};
+const PERSON = {
+  down: ['....kkkkkkkk....', '...kHHHHHHHHk...', '..kHHHHHHHHHHk..', '..kHHHHHHHHHHk..', '..kHssssssssHk..',
+    '..kssssssssssk..', '..kssksssskssk..', '..kssssssssssk..', '...ksssrrsssk...', '....kkkkkkkk....', ...BODY_DOWN],
+  up: ['....kkkkkkkk....', '...kHHHHHHHHk...', '..kHHHHHHHHHHk..', '..kHHHHHHHHHHk..', '..kHHHHHHHHHHk..',
+    '..kHHHHHHHHHHk..', '..kHHHHHHHHHHk..', '..ksHHHHHHHHsk..', '...kssssssssk...', '....kkkkkkkk....', ...BODY_DOWN],
+  left: ['....kkkkkkkk....', '...kHHHHHHHHk...', '..kHHHHHHHHHHk..', '..kHHHHHHHHHHk..', '..kssssHHHHHHk..',
+    '..kssssssHHHHk..', '..kskssssssHHk..', '..kssssssssssk..', '...krssssssssk..', '....kkkkkkkkk...',
+    '....kCCCCCCk....', '....kCCCCsCk....', '....kCCCCsCk....', '....kPPPPPPk....']
+};
+const HERO_BODY = ['...kyyyyyyyyk...', '..ksbbbbbbbbsk..', '..ksyyyyyyyysk..', '...kPPPPPPPPk...'];
+const HERO = {
+  down: ['....kkkkkkkk....', '...krrrrrrrrk...', '..krrrrwwrrrrk..', '..krrrrrrrrrrk..', '.kkkkkkkkkkkkkk.',
+    '..kHssssssssHk..', '..kssksssskssk..', '..kssssssssssk..', '...ksssrrsssk...', '....kkkkkkkk....', ...HERO_BODY],
+  up: ['....kkkkkkkk....', '...krrrrrrrrk...', '..krrrrrrrrrrk..', '..krrrrrrrrrrk..', '..kkkkkkkkkkkk..',
+    '..kHHHHHHHHHHk..', '..kHHHHHHHHHHk..', '..ksHHHHHHHHsk..', '...kssssssssk...', '....kkkkkkkk....', ...HERO_BODY],
+  left: ['....kkkkkkkk....', '...krrrrrrrrk...', '..krrrrrrrrrrk..', '..krrrrrrrrrrk..', 'kkkkkkkkkkkkkk..',
+    '..kssssHHHHHHk..', '..kskssssHHHHk..', '..kssssssssHHk..', '...krssssssssk..', '....kkkkkkkkk...',
+    '....kyyyyyyk....', '....kbbbbsbk....', '....kyyyysyk....', '....kPPPPPPk....']
+};
+function charSet(tpl, colors) {
+  const set = {};
+  for (const d of ['down', 'up', 'left']) {
+    const legs = d === 'left' ? LEGS.left : LEGS.down;
+    set[d] = legs.map(l => mkSprite([...tpl[d], ...l], colors));
+  }
+  set.right = set.left.map(flipH);
+  return set;
+}
+
+const SPR = {};
+const ENEMY_ART = {
+  dog: ['................', '................', '..k.k...........', '.knknk..........', '.knnnnk.........', 'kkwknnkkkkkkkk..',
+    'knnnnnnnnnnnnnk.', '.kkknnnnnnnnnnkk', '...knnnnnnnnnk.k', '...knnnnnnnnnk..', '...knnkkkkknnk..', '...knk....knk...',
+    '...knk....knk...', '..kkk....kkk....'],
+  crow: ['................', '......kkkk......', '.....kDDDDk.....', '....kDrDDDk.....', '...yykDDDDk.....', '....kkDDDDDk....',
+    '....kDDDDDDkk...', '...kDDDDDDDDkk..', '..kDDkDDDDDDDk..', '.kDDk.kDDDDDDDk.', '.kDk..kDDDDDDDDk', '..k...kDDDDDDkk.',
+    '.......kkDDkk...', '........y..y....', '.......yy.yy....'],
+  post: ['....kkkkkkkk....', '...krrrrrrrrk...', '..krrrrrrrrrrk..', '..krkkkkkkkkrk..', '..krrrrrrrrrrk..', '..krwkrrrrwkrk..',
+    '..krwkrrrrwkrk..', '..krrrrrrrrrrk..', '..krrrkkkkrrrk..', '..krrrrrrrrrrk..', '..kRRRRRRRRRRk..', '...kkkkkkkkkk...',
+    '.....kd..dk.....', '.....kd..dk.....', '....kkk..kkk....'],
+  shroom: ['................', '.....kkkkkk.....', '...kkmmwmmmkk...', '..kmmmmmmwmmmk..', '.kmwmmmmmmmmmwk.', '.kmmmmwmmmmmmmk.',
+    'kmmmmmmmmwmmmmk.', 'kkkkkkkkkkkkkkk.', '...kYYYYYYYk....', '...kYkYYYkYk....', '...kYYYYYYYk....', '...kYYkkkYYk....',
+    '...kYYYYYYYk....', '....kkYYYkk.....', '....kk...kk.....'],
+  bat: ['................', '................', 'k......kk......k', 'kk....kvvk....kk', 'kvk..kvvvvk..kvk', 'kvvkkvrvvrvkkvvk',
+    'kvvvvvvvvvvvvvvk', 'kvvvvvvwwvvvvvvk', '.kvvkvvvvvvkvvk.', '..kk.kvvvvk.kk..', '.....kvkkvk.....', '......k..k......'],
+  rock: ['................', '................', '.....kkkkkk.....', '...kkddaddakk...', '..kdaaadaaaadk..', '.kdaaaaaaadaaak.',
+    '.kaakkaaaakkaak.', '.kaakwaaaakwaak.', 'kdaaaaaaaaaaaadk', 'kdaaaakkkkaaaadk', 'kddaaaaaaaaaaddk', '.kddaaadaaaaddk.',
+    '..kkddddddddkk..', '....kkkkkkkk....'],
+  ghost: ['................', '.....kkkkkk.....', '...kkzzzzzzkk...', '..kzwwwwwwwwzk..', '..kwwkkwwkkwwk..', '.kwwwkkwwkkwwwk.',
+    '.kwwwwwwwwwwwwk.', '.kwwwwwkkwwwwwk.', '.kwwwwwkkwwwwwk.', '.kwwwwwwwwwwwwk.', '.kzwwwwwwwwwwzk.', '.kzzwwwwwwwwzzk.',
+    '.kzzkzzzkzzzkzk.', '.kzk.kzk.kzk.kk.', '..k...k...k.....'],
+  boss: ['......kkkk......', '.......yy.......', '....kkkkkkkk....', '...kaaaaaaaak...', '...kakkaakkak...', '...karkaakrak...',
+    '...kaaaaaaaak...', '...kakkkkkkak...', 'kk.kaaaaaaaak.kk', 'kak.kkkkkkkk.kak', 'kaakbbbbbbbbkaak', '.kkbbyyyybbbbkk.',
+    '...kbbybbybbbk..', '...kbbbyybbbbk..', '...kkbbbbbbkk...', '....kkk..kkk....']
+};
+const GIFT_ART = ['................', '................', '....yy....yy....', '.....yy..yy.....', '......yyyy......',
+  '..kkkkkyykkkkk..', '..krrrryyrrrrk..', '..kkkkkyykkkkk..', '..krrrryyrrrrk..', '..krrrryyrrrrk..', '..krrrryyrrrrk..',
+  '..krrrryyrrrrk..', '..kRRRRyyRRRRk..', '..kkkkkkkkkkkk..'];
+const GIFT_OPEN = ['................', '................', '................', '................', '................',
+  '................', '..kkkkkkkkkkkk..', '..kNNNNNNNNNNk..', '..kkkkkkkkkkkk..', '..krrrryyrrrrk..', '..krrrryyrrrrk..',
+  '..krrrryyrrrrk..', '..kRRRRyyRRRRk..', '..kkkkkkkkkkkk..'];
+const TREE_ART = ['.....kkkkkk.....', '...kkEEEEEEkk...', '..kEEEeEEEEEEk..', '.kEEeEEEEEeEEEk.', '.kEEEEEEEEEEEEk.',
+  'kEEEEEeEEEEEEEEk', 'kEeEEEEEEEEeEEEk', 'kEEEEEEEEEEEEEEk', '.kEEEEEEeEEEEEk.', '.kkEEEEEEEEEEkk.', '..kkkEEEEEEkkk..',
+  '....kkknnkkk....', '.......nn.......', '......knnk......', '.....kknnkk.....'];
+
+function buildSprites() {
+  SPR.hero = charSet(HERO, { H: 'N', P: 'B' });
+  const P2 = (H, C, Pn) => charSet(PERSON, { H, C, P: Pn });
+  SPR.mom = P2('n', 'r', 'r');
+  SPR.kid = P2('N', 'e', 'b');
+  SPR.lady = P2('o', 'P', 'P');
+  SPR.oldman = P2('w', 'd', 'N');
+  SPR.police = P2('k', 'B', 'B');
+  SPR.girl = P2('y', 'r', 'r');
+  SPR.girl2 = P2('o', 'c', 'b');
+  SPR.keeper = P2('N', 'w', 'b');
+  SPR.yuta = P2('k', 'e', 'B');
+  SPR.granny = P2('a', 'p', 'p');
+  for (const k in ENEMY_ART) SPR[k] = mkSprite(ENEMY_ART[k], { e: 'e' });
+  SPR.dogL = SPR.dog; SPR.dogR = flipH(SPR.dog);
+  SPR.dogNPC = { left: [SPR.dogL, SPR.dogL], right: [SPR.dogR, SPR.dogR], up: [SPR.dogL, SPR.dogL], down: [SPR.dogR, SPR.dogR] };
+  SPR.gift = mkSprite(GIFT_ART); SPR.giftOpen = mkSprite(GIFT_OPEN);
+  SPR.tree = mkSprite(TREE_ART);
+}
+
+// ================================================================= TILES
+const TILES = {};
+function mkTile(fn, seed = 7) {
+  const c = document.createElement('canvas'); c.width = c.height = 16;
+  const g = c.getContext('2d');
+  let sd = seed;
+  const sr = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+  const p = (col, x, y, w = 1, h = 1) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  fn(g, p, sr);
+  return c;
+}
+function buildTiles() {
+  const grass = (p, sr) => {
+    p('#5cc848', 0, 0, 16, 16);
+    for (let i = 0; i < 6; i++) { const x = Math.floor(sr() * 14), y = Math.floor(sr() * 13); p('#40a838', x, y, 1, 2); p('#40a838', x + 1, y + 1, 1, 1); }
+  };
+  const floor = p => { p('#d8a060', 0, 0, 16, 16); p('#b8804c', 0, 7, 16, 1); p('#b8804c', 0, 15, 16, 1); p('#b8804c', 5, 0, 1, 7); p('#b8804c', 11, 8, 1, 7); };
+  const wall = p => { p('#f8dca8', 0, 0, 16, 16); p('#e8c890', 0, 5, 16, 1); p('#e8c890', 0, 10, 16, 1); p('#c09060', 0, 14, 16, 2); };
+  const cliff = (p, sr, base, hi, lo) => {
+    p(base, 0, 0, 16, 16);
+    for (let i = 0; i < 5; i++) { const x = Math.floor(sr() * 12), y = Math.floor(sr() * 12); p(hi, x, y, 3 + Math.floor(sr() * 3), 2); p(lo, x, y + 2, 4, 1); }
+    p(lo, 0, 15, 16, 1);
+  };
+  TILES['.'] = mkTile((g, p, sr) => grass(p, sr));
+  TILES[','] = mkTile((g, p, sr) => {
+    grass(p, sr);
+    const cols = ['#fcfcfc', '#fc5858', '#f8d838', '#fc9ce0'];
+    [[2, 3], [10, 2], [6, 9], [12, 11]].forEach(([x, y], i) => { p(cols[i], x, y, 2, 2); p('#f8b800', x, y, 1, 1); p('#2c8c20', x + 1, y + 2, 1, 2); });
+  }, 13);
+  TILES['T'] = mkTile((g, p, sr) => { grass(p, sr); g.drawImage(SPR.tree, 0, 0); }, 3);
+  TILES['='] = mkTile((g, p, sr) => { p('#a8a8b0', 0, 0, 16, 16); for (let i = 0; i < 9; i++) p('#94949e', Math.floor(sr() * 16), Math.floor(sr() * 16), 1, 1); }, 5);
+  TILES[':'] = mkTile((g, p, sr) => { p('#e4c488', 0, 0, 16, 16); for (let i = 0; i < 8; i++) p('#c8a060', Math.floor(sr() * 15), Math.floor(sr() * 15), 2, 1); }, 9);
+  TILES['~'] = [0, 1].map(f => mkTile((g, p) => {
+    p('#2878f0', 0, 0, 16, 16);
+    for (const y of [3, 8, 13]) { const x0 = (f * 4 + y * 3) % 16; p('#88c8fc', x0, y, 4, 1); p('#88c8fc', (x0 + 9) % 16, y + 1, 3, 1); }
+  }));
+  TILES['F'] = mkTile((g, p, sr) => { grass(p, sr); p('#a0a0a0', 0, 7, 16, 1); p('#a0a0a0', 0, 11, 16, 1); p('#fcfcfc', 0, 6, 16, 1); p('#fcfcfc', 0, 10, 16, 1); for (const x of [1, 9]) { p('#fcfcfc', x, 3, 3, 11); p('#a0a0a0', x + 2, 4, 1, 10); } }, 11);
+  const roof = (a, b, c) => mkTile((g, p) => { p(a, 0, 0, 16, 16); for (let y = 0; y < 16; y += 4) { p(b, 0, y + 3, 16, 1); for (let x = (y / 4) % 2 ? 4 : 0; x < 16; x += 8) p(b, x, y, 1, 3); p(c, 0, y, 16, 1); } });
+  TILES['r'] = roof('#c83c28', '#882010', '#f07050');
+  TILES['q'] = roof('#3868d8', '#183888', '#78a0f8');
+  TILES['h'] = mkTile((g, p) => wall(p));
+  TILES['j'] = mkTile((g, p) => { wall(p); p('#503000', 3, 3, 10, 9); p('#a4e4fc', 4, 4, 8, 7); p('#fcfcfc', 5, 5, 2, 2); p('#503000', 8, 4, 1, 7); p('#503000', 4, 7, 8, 1); });
+  TILES['d'] = mkTile((g, p) => { wall(p); p('#5c3008', 3, 2, 10, 14); p('#a86828', 4, 3, 8, 13); p('#8c5420', 5, 4, 6, 5); p('#8c5420', 5, 10, 6, 5); p('#f8b800', 10, 9, 1, 2); });
+  TILES['S'] = mkTile((g, p, sr) => { grass(p, sr); p('#5c3008', 7, 9, 2, 6); p('#503000', 2, 2, 12, 8); p('#d0a060', 3, 3, 10, 6); p('#7c4810', 4, 4, 8, 1); p('#7c4810', 4, 6, 6, 1); }, 17);
+  TILES['f'] = mkTile((g, p) => floor(p));
+  TILES['#'] = mkTile((g, p) => { p('#f0e0c0', 0, 0, 16, 16); for (let x = 1; x < 16; x += 4) p('#e0cca4', x, 0, 1, 12); p('#8c5c30', 0, 12, 16, 4); p('#6c4020', 0, 12, 16, 1); });
+  TILES['K'] = mkTile((g, p, sr) => {
+    p('#7c4810', 0, 0, 16, 16); p('#503000', 1, 7, 14, 1); p('#503000', 1, 15, 14, 1);
+    const bc = ['#d82800', '#0058f8', '#00a800', '#f8b800', '#fcfcfc', '#6844fc'];
+    for (const y0 of [1, 9]) for (let x = 1; x < 15; x += 2) p(bc[Math.floor(sr() * bc.length)], x, y0 + Math.floor(sr() * 2), 2, 6 - Math.floor(sr() * 2));
+  }, 21);
+  TILES['b'] = mkTile((g, p) => { floor(p); p('#7c4810', 1, 0, 14, 16); p('#fcfcfc', 3, 1, 10, 4); p('#3c7cfc', 2, 6, 12, 9); p('#2050c8', 2, 6, 12, 1); p('#2050c8', 2, 14, 12, 1); });
+  TILES['t'] = mkTile((g, p) => { floor(p); p('#5c3008', 0, 2, 16, 11); p('#a86828', 1, 3, 14, 8); p('#503000', 1, 13, 2, 3); p('#503000', 13, 13, 2, 3); });
+  TILES['P'] = mkTile((g, p) => { floor(p); p('#5c3008', 2, 8, 12, 8); p('#a86828', 2, 7, 12, 3); p('#d82800', 4, 3, 8, 5); p('#a81000', 3, 2, 10, 2); p('#fcfcfc', 7, 4, 2, 2); });
+  TILES['c'] = mkTile((g, p) => { floor(p); p('#c89050', 0, 1, 16, 7); p('#e8b878', 0, 1, 16, 1); p('#8c5c30', 0, 8, 16, 8); p('#6c3c18', 0, 8, 16, 1); });
+  TILES['p'] = mkTile((g, p) => { floor(p); p('#00a800', 3, 2, 10, 8); p('#58d854', 5, 3, 3, 3); p('#005800', 9, 6, 3, 3); p('#c85020', 5, 10, 6, 6); p('#a03810', 5, 10, 6, 1); });
+  TILES['x'] = mkTile((g, p) => { floor(p); p('#c83c28', 1, 2, 14, 12); p('#f8b800', 2, 3, 12, 1); p('#f8b800', 2, 12, 12, 1); });
+  TILES['M'] = mkTile((g, p, sr) => cliff(p, sr, '#9c7448', '#c09468', '#6c4c28'), 31);
+  TILES['R'] = mkTile((g, p, sr) => cliff(p, sr, '#5c4c48', '#7c6c64', '#2c2020'), 37);
+  TILES['g'] = mkTile((g, p, sr) => { p('#2c2428', 0, 0, 16, 16); for (let i = 0; i < 6; i++) p('#443840', Math.floor(sr() * 16), Math.floor(sr() * 16), 1, 1); }, 41);
+  TILES['L'] = mkTile((g, p, sr) => { cliff(p, sr, '#9c7448', '#c09468', '#6c4c28'); p('#000', 3, 5, 10, 11); p('#000', 4, 4, 8, 1); p('#000', 5, 3, 6, 1); }, 43);
+  TILES['E'] = mkTile((g, p) => { p('#2c2428', 0, 0, 16, 16); p('#fce0a8', 3, 1, 10, 14); for (let y = 2; y < 15; y += 4) p('#c8a050', 3, y + 2, 10, 2); p('#fcfcfc', 4, 2, 8, 1); });
+}
+const SOLID = new Set(['T', '~', 'F', 'r', 'q', 'h', 'j', 'S', '#', 'K', 'b', 't', 'P', 'c', 'p', 'M', 'R']);
+
+// ================================================================= DATA
+const ITEMS = {
+  bread:  { name: 'パン', type: 'hp', amt: 25, price: 10, verb: 'たべた' },
+  burger: { name: 'ハンバーガー', type: 'hp', amt: 60, price: 30, verb: 'たべた' },
+  candy:  { name: 'ほしキャンディ', type: 'pp', amt: 12, price: 30, verb: 'なめた' },
+  bomb:   { name: 'ばくちく', type: 'bomb', amt: 40, price: 40 },
+  bat:    { name: 'バット', type: 'weapon', off: 5, price: 50 },
+  mbat:   { name: 'きんぞくバット', type: 'weapon', off: 12, price: 0 },
+  charm:  { name: 'おまもり', type: 'armor', def: 4, price: 0 },
+  jacket: { name: 'ぶあついジャンパー', type: 'armor', def: 8, price: 150 }
+};
+const SKILLS = [
+  { name: 'いやし', pp: 3, lv: 1, type: 'heal', amt: 35 },
+  { name: 'ほのお', pp: 4, lv: 3, type: 'dmg', base: 32 },
+  { name: 'いなずま', pp: 7, lv: 5, type: 'all', base: 30 },
+  { name: 'おおいやし', pp: 8, lv: 7, type: 'heal', amt: 120 },
+  { name: 'ながれぼし', pp: 12, lv: 9, type: 'all', base: 70 }
+];
+const EXP = [0, 10, 28, 55, 95, 150, 220, 310, 420, 560, 730, 930, 1160, 1420, 1720, 2060, 2440, 2860, 3320, 3820, 1e9];
+const ENEMIES = {
+  dog:    { name: 'のらいぬ', hp: 16, off: 7, def: 3, spd: 6, exp: 4, money: 3, drop: ['bread', .12],
+    acts: [['atk', 'かみついてきた！', 3], ['nop', 'うーっと うなっている。', 1]] },
+  crow:   { name: 'いじわるカラス', hp: 11, off: 6, def: 2, spd: 10, exp: 3, money: 2,
+    acts: [['atk', 'つついてきた！', 3], ['nop', 'カーカーと わらっている。', 1]] },
+  post:   { name: 'あるくポスト', hp: 26, off: 9, def: 6, spd: 3, exp: 8, money: 9, drop: ['candy', .15],
+    acts: [['atk', 'てがみを なげつけてきた！', 2], ['nop', 'ぼーっと している。', 1], ['charge', 'くちを パクパク させている！', 1]] },
+  shroom: { name: 'へんなキノコ', hp: 20, off: 8, def: 4, spd: 5, exp: 6, money: 5,
+    acts: [['atk', 'ほうしを まきちらした！', 2], ['atk', 'たいあたりしてきた！', 1], ['pp', 'あやしい においを はなった！', 1, 3]] },
+  bat:    { name: 'まよいコウモリ', hp: 28, off: 15, def: 7, spd: 16, exp: 14, money: 7,
+    acts: [['atk', 'かみついてきた！', 3], ['nop', 'ばたばたと とびまわっている。', 1]] },
+  rock:   { name: 'いしころン', hp: 50, off: 18, def: 16, spd: 3, exp: 24, money: 14, drop: ['burger', .2],
+    acts: [['atk', 'ごろごろ ころがってきた！', 2], ['charge', 'からだを ちぢめて ちからを ためている！', 1]] },
+  ghost:  { name: 'さまようおばけ', hp: 34, off: 16, def: 9, spd: 9, exp: 19, money: 10, drop: ['candy', .2],
+    acts: [['atk', 'つめたい いきを ふきかけた！', 2], ['pp', 'こちらの ちからを すいとった！', 1, 5], ['nop', 'うらめしそうに こちらを みている。', 1]] },
+  boss:   { name: 'ほしくずロボ', hp: 280, off: 24, def: 15, spd: 11, exp: 0, money: 0, scale: 6,
+    acts: [['atk', 'ビームを はっしゃした！', 3], ['charge', 'エネルギーを ためている！', 1], ['atk', 'アームで なぐりかかってきた！', 2], ['nop', 'ガガガ…… ピー…… こしょうしているようだ。', 1]] }
+};
+
+// ================================================================= MAPS
+const T_TOWN = [
+  'TTTTTTTTTTTTTTTTTTTTTTTTTTTTTT',
+  'T............................T',
+  'T.rrrrr.....,.......qqqqq....T',
+  'T.rrrrr.............qqqqq..,.T',
+  'T.hjdjh....S........hjdjh....T',
+  'T...=.................=......T',
+  'T...=.................=......T',
+  'T=============================',
+  'T=============================',
+  'T..........=.................T',
+  'T.rrrrr....=....FFFFFFFFF....T',
+  'T.rrrrr....=....F,..,..,F....T',
+  'T.hjdjh....=....F.~~~~..F..T.T',
+  'T...=......=....F.~~~~.,F....T',
+  'T...=......=....F,......F....T',
+  'T...========....FFFF.FFFF....T',
+  'T..........=........=........T',
+  'T..,.......==========....,...T',
+  'T.......TT..............TT...T',
+  'T..TT...........,............T',
+  'T............................T',
+  'TTTTTTTTTTTTTTTTTTTTTTTTTTTTTT'];
+const T_HOME = [
+  '############',
+  '#KKffffPffb#',
+  '#ffffffffff#',
+  '#fttfffffff#',
+  '#fttfffffff#',
+  '#ffffffffff#',
+  '#pffffffffp#',
+  '#####xx#####'];
+const T_SHOP = [
+  '############',
+  '#KKKKKKKKKK#',
+  '#ffffffffff#',
+  '#cccccffffp#',
+  '#ffffffffff#',
+  '#pfffffffff#',
+  '#####xx#####'];
+const T_FRIEND = [
+  '############',
+  '#KKffffffbf#',
+  '#ffffffffff#',
+  '#ffffttffff#',
+  '#ffffttffff#',
+  '#pffffffffp#',
+  '#####xx#####'];
+const T_FIELD = [
+  'TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT',
+  'T............TTT........MMMMMMMMMMMT',
+  'T..TT..,.............,..MMMMMMLMMMMT',
+  'T..TT.......................:::....T',
+  'T...........,...............:......T',
+  'T......TT...................:...,..T',
+  'T......TT.......~~~~~.......:......T',
+  '::::::::::::...~~~~~~~......:......T',
+  '::::::::::::...~~~~~~~......:......T',
+  'T..........:....~~~~~.......:...TT.T',
+  'T..,.......:................:...TT.T',
+  'T..........::::::::::::::::::......T',
+  'T....M.........:...................T',
+  'T...MMM........:.......,...........T',
+  'T....M.........:..........TT.......T',
+  'T..............:..........TT.......T',
+  'T.....,........:...................T',
+  'T..TT..........:.........,.........T',
+  'T..TT..........:...................T',
+  'T........,.....:.......MMM.........T',
+  'T..............::::::..MMM.....,...T',
+  'T....................:.............T',
+  'T..TT.......,........:......TT.....T',
+  'T..TT................:......TT.....T',
+  'T..................................T',
+  'TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT'];
+const T_CAVE = [
+  'RRRRRRRRRRRRRRRRRRRRRRRRRRRR',
+  'RRRRRRRRRRRRRRRRRRRggggRRRRR',
+  'RgggggggggggRggggggggggggggR',
+  'RggggggRgggggggggggggggggggR',
+  'RggRRRRRRRRRRRRRRRRRRRRggRRR',
+  'RggRRRRRRRRRRRRRRRRRRggggggR',
+  'RggRRRRRRRRRRRRRRRRRRggggggR',
+  'RggRRRRRRRRRRRRRRRRRRggggggR',
+  'RggRRRRRRRRRRRRRRRRRRRRRRRRR',
+  'RggggggRgggggggggggggggggggR',
+  'RgggggggggggggggRggggggggggR',
+  'RggRRRRRRRRRRRRRRRRRRRRRRggR',
+  'RgggggRRRRRRRRRRRRRRRRRRRggR',
+  'RgggggRRRRRRRRRRRRRRRRRRRggR',
+  'RgggggRRRRRRRRRRRRRRRRRRRggR',
+  'RRRRRRRRRRRRRRRRRRRRRRRRRggR',
+  'RgggggggggRggggggggggggggggR',
+  'REgggggggggggggggRgggggggggR',
+  'RRRRRRRRRRRRRRRRRRRRRRRRRRRR'];
+
+// helpers for entities
+function npc(o) {
+  return Object.assign({ kind: 'npc', dir: 'down', wander: false, moving: false, anim: 0, timer: 60 + ri(0, 120) }, o,
+    { px: o.x * 16, py: o.y * 16, hx: o.x, hy: o.y });
+}
+function gift(id, x, y, item) { return { kind: 'gift', id, x, y, px: x * 16, py: y * 16, item, talk: () => openGift(id, item) }; }
+
+const MAPS = {
+  town: { title: 'ほしふるまち', song: 'town', tiles: T_TOWN,
+    warps: [
+      { x: 4, y: 4, to: 'home', tx: 5, ty: 6, dir: 'up' },
+      { x: 22, y: 4, to: 'shop', tx: 5, ty: 5, dir: 'up' },
+      { x: 4, y: 12, to: 'friend', tx: 5, ty: 5, dir: 'up' },
+      { x: 29, y: 7, to: 'field', tx: 1, ty: 7, dir: 'right', check: policeCheck },
+      { x: 29, y: 8, to: 'field', tx: 1, ty: 8, dir: 'right', check: policeCheck }],
+    signs: { '11,4': 'ここは ほしふるまち。\nひがしへ すすむと うらやまへ つづく のはら。' },
+    ents: () => [
+      npc({ x: 14, y: 9, set: 'kid', wander: true, talk: ['「しってる？ ゆうべ うらやまに ほしが おちたんだって！」', '「ひがしの みちを ずっと いくと、 うらやまの どうくつが あるよ。」'] }),
+      npc({ x: 27, y: 6, set: 'police', talk: () => P.weapon
+        ? say('「まちの そとは あぶないぞ。 きを つけてな。」')
+        : say('「まちの そとへ いくなら、 せめて バットくらい もっていきなさい。 おみせで うっているよ。」') }),
+      npc({ x: 6, y: 19, set: 'oldman', wander: true, talk: ['「ほしには ふしぎな ちからが あるそうじゃ。」', '「わかいころは わしも すこしだけ つかえた ものじゃよ…… ほっほっほ。」'] }),
+      npc({ x: 25, y: 17, set: 'lady', wander: true, talk: ['「さいきん カラスが いじわるでねえ。 せんたくものを もっていっちゃうのよ。」'] }),
+      npc({ x: 22, y: 13, set: 'girl', wander: true, talk: ['「いけの さかなが みんな かくれちゃったの。」', '「ほしが おちてから、 なんだか へんなの。」'] }),
+      npc({ x: 8, y: 6, set: 'dogNPC', dir: 'left', wander: true, talk: ['ワンワン！', '（しっぽを ふっている。 この こは だいじょうぶ みたいだ。）'] })
+    ] },
+  home: { song: 'town', tiles: T_HOME,
+    warps: [{ x: 5, y: 7, to: 'town', tx: 4, ty: 5, dir: 'down' }, { x: 6, y: 7, to: 'town', tx: 4, ty: 5, dir: 'down' }],
+    ents: () => [npc({ x: 7, y: 4, set: 'mom', talk: momTalk })] },
+  shop: { song: 'town', tiles: T_SHOP,
+    warps: [{ x: 5, y: 6, to: 'town', tx: 22, ty: 5, dir: 'down' }, { x: 6, y: 6, to: 'town', tx: 22, ty: 5, dir: 'down' }],
+    ents: () => [
+      npc({ x: 3, y: 2, set: 'keeper', talk: shopTalk }),
+      npc({ x: 8, y: 4, set: 'kid', wander: true, talk: ['「ばくちくは てきが たくさん いるとき べんりだよ。」', '「ぼくは おこづかいが たりなくて かえないけど……。」'] })
+    ] },
+  friend: { song: 'town', tiles: T_FRIEND,
+    warps: [{ x: 5, y: 6, to: 'town', tx: 4, ty: 13, dir: 'down' }, { x: 6, y: 6, to: 'town', tx: 4, ty: 13, dir: 'down' }],
+    ents: () => [npc({ x: 8, y: 3, set: 'yuta', talk: yutaTalk })] },
+  field: { title: 'うらやまの のはら', song: 'field', tiles: T_FIELD,
+    enc: [['dog'], ['crow'], ['crow', 'crow'], ['dog', 'crow'], ['post'], ['shroom'], ['shroom', 'dog'], ['dog', 'dog']],
+    warps: [
+      { x: 0, y: 7, to: 'town', tx: 28, ty: 7, dir: 'left' },
+      { x: 0, y: 8, to: 'town', tx: 28, ty: 8, dir: 'left' },
+      { x: 30, y: 2, to: 'cave', tx: 2, ty: 17, dir: 'right' }],
+    ents: () => [
+      npc({ x: 13, y: 4, set: 'oldman', talk: ['「どうくつは きたひがしの がけに あるんじゃ。」', '「なかは くらくて いりくんでおる。 きを つけるんじゃぞ。」'] }),
+      npc({ x: 14, y: 10, set: 'girl2', wander: true, talk: ['「この へん、 キノコが あるきまわってるの！ ほんとうよ！」'] }),
+      npc({ x: 32, y: 3, set: 'granny', talk: grannyTalk }),
+      gift('f1', 5, 24, 'bread'), gift('f2', 33, 23, 'candy'), gift('f3', 2, 13, 'bomb'), gift('f4', 34, 9, 'burger')
+    ] },
+  cave: { title: 'ほしの どうくつ', song: 'cave', tiles: T_CAVE,
+    enc: [['bat'], ['bat', 'bat'], ['rock'], ['ghost'], ['ghost', 'bat'], ['rock', 'bat'], ['shroom', 'bat']],
+    warps: [{ x: 1, y: 17, to: 'field', tx: 30, ty: 3, dir: 'down' }],
+    ents: () => {
+      const list = [gift('c1', 25, 6, 'mbat'), gift('c2', 2, 13, 'burger'), gift('c3', 21, 7, 'candy'), gift('c4', 4, 2, 'bomb')];
+      if (!F.boss) list.push({ kind: 'boss', x: 20, y: 1, px: 320, py: 16, talk: bossTalk });
+      return list;
+    } }
+};
+
+// ================================================================= STATE
+let P = null, F = null;
+let scene = 'boot';
+let map = null, mapId = null;
+const player = { x: 0, y: 0, px: 0, py: 0, dir: 'down', moving: false, mdx: 0, mdy: 0, anim: 0 };
+let widgets = [];
+let dlg = null;
+let busy = false;
+let fade = 0;
+let frame = 0;
+let waiters = [];
+let banner = null;
+let B = null;       // battle state
+let trans = null;   // transition
+let CR = null;      // credits
+let pendingTitle = false;
+const SAVE_KEY = 'hoshifuru_save_v1';
+
+const nextFrame = () => new Promise(r => waiters.push(r));
+async function wait(n) { for (let i = 0; i < n; i++) await nextFrame(); }
+async function fadeOut(n = 16) { for (let i = 1; i <= n; i++) { fade = i / n; await nextFrame(); } fade = 1; }
+async function fadeIn(n = 16) { for (let i = n - 1; i >= 0; i--) { fade = i / n; await nextFrame(); } fade = 0; }
+
+async function runScript(fn) {
+  if (busy) return;
+  busy = true;
+  try { await fn(); }
+  catch (err) { console.error(err); }
+  finally { closeAll(); busy = false; }
+}
+
+// ================================================================= TEXT / WINDOWS
+function txt(s, x, y, col = '#fcfcfc', size = 16) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.font = `${size}px ${FONT}`;
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = col;
+  ctx.fillText(s, Math.round(x * S), Math.round(y * S));
+  ctx.restore();
+}
+function tw(s, size = 16) { ctx.save(); ctx.font = `${size}px ${FONT}`; const w = ctx.measureText(s).width / S; ctx.restore(); return w; }
+function rect(x, y, w, h, col) { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); }
+function lineRect(x, y, w, h, col) { rect(x + 1, y, w - 2, 1, col); rect(x + 1, y + h - 1, w - 2, 1, col); rect(x, y + 1, 1, h - 2, col); rect(x + w - 1, y + 1, 1, h - 2, col); }
+function win(x, y, w, h) {
+  rect(x + 1, y, w - 2, h, '#000'); rect(x, y + 1, w, h - 2, '#000');
+  lineRect(x + 2, y + 2, w - 4, h - 4, '#fcfcfc');
+}
+function arrowR(x, y, col = '#fcfcfc') { for (let i = 0; i < 4; i++) rect(x + i, y + i, 1, 7 - i * 2, col); }
+function arrowD(x, y, col = '#fcfcfc') { for (let i = 0; i < 4; i++) rect(x + i, y + i, 7 - i * 2, 1, col); }
+
+function wrapText(str, maxW) {
+  const out = [];
+  for (const para of str.split('\n')) {
+    let line = '';
+    for (const ch of para) {
+      const t = line + ch;
+      if (tw(t) > maxW && line) {
+        const sp = line.lastIndexOf(' ');
+        if (sp > 0 && ch !== ' ') { out.push(line.slice(0, sp)); line = line.slice(sp + 1) + ch; }
+        else { out.push(line); line = ch === ' ' ? '' : ch; }
+      } else line = t;
+    }
+    out.push(line);
+  }
+  return out;
+}
+const BOX = {
+  field: { x: 8, y: 164, w: 240, h: 68 },
+  battle: { x: 8, y: 6, w: 240, h: 60 },
+  story: { x: 24, y: 84, w: 208, h: 72, noframe: true }
+};
+function removeW(w) { widgets = widgets.filter(x => x !== w); if (w === dlg) dlg = null; }
+function closeDlg() { if (dlg) removeW(dlg); dlg = null; }
+function closeAll() { widgets = []; dlg = null; }
+function abortWidgets() {
+  for (const w of [...widgets]) if (w.interactive && !w.done && w.abort) w.abort();
+}
+
+function say(str, o = {}) {
+  const box = o.box || (scene === 'battle' ? 'battle' : scene === 'story' ? 'story' : 'field');
+  const b = BOX[box];
+  const lines = wrapText(str, b.w - 24);
+  const pages = [];
+  for (let i = 0; i < lines.length; i += 3) pages.push(lines.slice(i, i + 3));
+  return new Promise(res => {
+    if (!dlg) {
+      dlg = {
+        interactive: true, done: true,
+        update() {
+          const lines = this.pages[this.page];
+          const total = lines.join('').length;
+          if (this.n < total) {
+            const before = Math.floor(this.n);
+            this.n += this.speed;
+            if (Math.floor(this.n) !== before && before % 2 === 0) sfx('text');
+            if (hit('a') || hit('b')) this.n = total;
+            return;
+          }
+          if (this.auto) { if (++this.autoT >= this.auto || hit('a') || hit('b')) this.next(); return; }
+          if (hit('a') || hit('b')) { sfx('cur'); this.next(); }
+        },
+        next() {
+          if (this.page < this.pages.length - 1) { this.page++; this.n = 0; this.autoT = 0; }
+          else { this.done = true; const r = this.res; this.res = null; if (r) r(); }
+        },
+        abort() { this.done = true; const r = this.res; this.res = null; if (r) r(); },
+        draw() {
+          const b = BOX[this.box];
+          if (!b.noframe) win(b.x, b.y, b.w, b.h);
+          const lines = this.pages[this.page] || [];
+          let left = Math.floor(this.n);
+          lines.forEach((ln, i) => {
+            if (left <= 0) return;
+            txt(ln.slice(0, left), b.x + 12, b.y + 10 + i * 16);
+            left -= ln.length;
+          });
+          const total = lines.join('').length;
+          if (!this.done && !this.auto && this.n >= total && frame % 40 < 26) arrowD(b.x + b.w - 18, b.y + b.h - 11);
+        }
+      };
+    }
+    if (!widgets.includes(dlg)) widgets.push(dlg);
+    Object.assign(dlg, { box, pages, page: 0, n: 0, auto: o.auto || 0, autoT: 0, done: false, res, speed: o.speed || (box === 'story' ? 0.6 : 1) });
+  });
+}
+
+function menuLayout(m) {
+  const lab = m.items.map(it => typeof it === 'string' ? { label: it } : it);
+  const cols = m.cols || 1, rows = Math.ceil(lab.length / cols);
+  const colW = m.colW || Math.max(...lab.map(l => tw(l.label) + (l.right ? tw(l.right) + 14 : 0))) + 14;
+  const th = m.title ? 14 : 0;
+  const w = m.w || colW * cols + 18;
+  return { lab, cols, rows, colW, w, h: rows * 14 + 13 + th, th };
+}
+function menu(items, o = {}) {
+  let res;
+  const p = new Promise(r => res = r);
+  const m = {
+    interactive: true, done: false, items, i: o.start || 0, x: o.x ?? 8, y: o.y ?? 8, w: o.w, cols: o.cols, colW: o.colW,
+    title: o.title, cancel: o.cancel !== false, persist: o.persist, onMove: o.onMove,
+    update() {
+      const L = this.L || (this.L = menuLayout(this));
+      const n = L.lab.length;
+      let i = this.i;
+      if (rep('up')) i -= L.cols; else if (rep('down')) i += L.cols;
+      else if (L.cols > 1 && rep('left')) i -= 1; else if (L.cols > 1 && rep('right')) i += 1;
+      i = ((i % n) + n) % n;
+      if (i !== this.i) { this.i = i; sfx('cur'); if (this.onMove) this.onMove(i); }
+      if (hit('a')) { if (L.lab[this.i].dis) { sfx('buzz'); return; } sfx('ok'); this.finish(this.i); }
+      else if (this.cancel && hit('b')) { sfx('cur'); this.finish(-1); }
+    },
+    finish(v) { this.done = true; if (!this.persist) removeW(this); res(v); },
+    abort() { this.done = true; removeW(this); res(-2); },
+    draw() {
+      const L = this.L || (this.L = menuLayout(this));
+      const w = L.w;
+      win(this.x, this.y, w, L.h);
+      if (this.title) txt(this.title, this.x + 12, this.y + 7, '#bcbcbc');
+      L.lab.forEach((it, i) => {
+        const c = i % L.cols, r = Math.floor(i / L.cols);
+        const tx = this.x + 16 + c * L.colW, ty = this.y + 8 + L.th + r * 14;
+        txt(it.label, tx, ty, it.dis ? '#7c7c7c' : '#fcfcfc');
+        if (it.right) { const rx = (L.cols === 1 ? this.x + w - 12 : tx + L.colW - 12) - tw(it.right); txt(it.right, rx, ty, it.dis ? '#7c7c7c' : '#fcfcfc'); }
+        if (i === this.i && (this.done || frame % 30 < 22)) arrowR(tx - 9, ty + 1, this.done ? '#7c7c7c' : '#fcfcfc');
+      });
+    }
+  };
+  widgets.push(m);
+  if (m.onMove) m.onMove(m.i);
+  return { wait: () => p, close: () => removeW(m), m };
+}
+async function choose(items, o = {}) { const h = menu(items, o); return await h.wait(); }
+function panel(fn) { const w = { interactive: false, draw: fn }; widgets.push(w); return { close: () => removeW(w) }; }
+function waitA() {
+  return new Promise(res => {
+    const w = { interactive: true, done: false, update() { if (hit('a') || hit('b')) { this.done = true; removeW(this); res(); } }, abort() { this.done = true; removeW(this); res(); }, draw() {} };
+    widgets.push(w);
+  });
+}
+async function yesno(o = {}) { return (await choose(['はい', 'いいえ'], Object.assign({ x: 184, y: 116 }, o))) === 0; }
+
+// ---------------------------------------------------------------- name entry
+const KANA = 'あいうえおはひふへほかきくけこまみむめもさしすせそやゆよわんたちつてとらりるれろなにぬねのをっゃゅょがぎぐげごばびぶべぼざじずぜぞぱぴぷぺぽだーづでどぁぃぅぇぉ';
+const toKata = s => s.replace(/[ぁ-ゖ]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60));
+function nameEntry(prompt, def, max) {
+  return new Promise(res => {
+    const w = {
+      interactive: true, done: false, val: '', cx: 0, cy: 0, kata: true,
+      update() {
+        let { cx, cy } = this;
+        if (rep('up')) { cy = (cy + 8) % 9; if (cy === 8) cx = Math.min(2, Math.floor(cx / 4)); else if (this.cy === 8) cx = [1, 5, 8][this.cx]; }
+        else if (rep('down')) { cy = (cy + 1) % 9; if (cy === 8) cx = Math.min(2, Math.floor(cx / 4)); else if (this.cy === 8) cx = [1, 5, 8][this.cx]; }
+        else if (rep('left')) cx = (cx + (cy === 8 ? 2 : 9)) % (cy === 8 ? 3 : 10);
+        else if (rep('right')) cx = (cx + 1) % (cy === 8 ? 3 : 10);
+        if (cx !== this.cx || cy !== this.cy) { this.cx = cx; this.cy = cy; sfx('cur'); }
+        if (hit('a')) {
+          if (cy < 8) {
+            if (this.val.length < max) { let ch = KANA[cy * 10 + cx]; if (this.kata) ch = toKata(ch); this.val += ch; sfx('ok'); } else sfx('buzz');
+          } else if (cx === 0) { this.kata = !this.kata; sfx('ok'); }
+          else if (cx === 1) { this.val = this.val.slice(0, -1); sfx('cur'); }
+          else { sfx('ok'); this.done = true; removeW(this); res(this.val || def); }
+        } else if (hit('b')) { this.val = this.val.slice(0, -1); sfx('cur'); }
+      },
+      draw() {
+        rect(0, 0, W, H, '#000');
+        txt(prompt, 16, 12);
+        txt(`（なにも いれないと「${def}」）`, 16, 26, '#7c7c7c');
+        win(64, 40, 128, 26);
+        for (let i = 0; i < max; i++) {
+          const ch = this.val[i];
+          if (ch) txt(ch, 80 + i * 16, 49);
+          else rect(80 + i * 16, 57, 9, 1, i === this.val.length && frame % 40 < 26 ? '#fcfcfc' : '#7c7c7c');
+        }
+        for (let r = 0; r < 8; r++) for (let c = 0; c < 10; c++) {
+          let ch = KANA[r * 10 + c]; if (this.kata) ch = toKata(ch);
+          const x = 40 + c * 18, y = 76 + r * 16;
+          txt(ch, x, y);
+          if (this.cy === r && this.cx === c) arrowR(x - 8, y + 1);
+        }
+        const cmds = [this.kata ? 'ひらがな' : 'カタカナ', 'けす', 'おわり'];
+        cmds.forEach((s, i) => { const x = 40 + i * 64, y = 212; txt(s, x, y, i === 2 ? '#f8b800' : '#fcfcfc'); if (this.cy === 8 && this.cx === i) arrowR(x - 8, y + 1); });
+      }
+    };
+    widgets.push(w);
+  });
+}
+
+// ================================================================= PLAYER HELPERS
+const pOff = () => P.off + (P.weapon ? ITEMS[P.weapon].off : 0);
+const pDef = () => P.def + (P.armor ? ITEMS[P.armor].def : 0);
+function healFull() { P.hpT = P.hp = P.maxhp; P.pp = P.maxpp; }
+function healHP(n) { const before = P.hpT; P.hpT = Math.min(P.maxhp, P.hpT + n); if (scene !== 'battle') P.hp = P.hpT; return P.hpT - before; }
+function newGame(name, food) {
+  P = { name, food, lv: 1, exp: 0, maxhp: 32, hp: 32, hpT: 32, maxpp: 12, pp: 12, off: 7, def: 4, spd: 6, money: 20, inv: ['bread'], weapon: null, armor: null, steps: 0 };
+  F = { gifts: {}, mom: 0, yuta: false, boss: false };
+}
+function saveGame() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ P, F, map: mapId, x: player.x, y: player.y, dir: player.dir })); return true; }
+  catch (e) { return false; }
+}
+function loadSave() { try { const s = localStorage.getItem(SAVE_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+
+// ================================================================= MAP / FIELD
+function loadMap(id, x, y, dir = 'down') {
+  mapId = id;
+  const def = MAPS[id];
+  map = Object.assign({}, def, { id, w: def.tiles[0].length, h: def.tiles.length, ents: def.ents() });
+  Object.assign(player, { x, y, px: x * 16, py: y * 16, dir, moving: false });
+  scene = 'field';
+  playSong(def.song);
+  banner = def.title ? { text: def.title, t: 150 } : null;
+}
+function tileAt(x, y) { if (!map || y < 0 || y >= map.h || x < 0 || x >= map.w) return null; return map.tiles[y][x]; }
+function walkable(x, y) { const t = tileAt(x, y); return t !== null && !SOLID.has(t); }
+function entAt(x, y) { return map.ents.find(e => e.x === x && e.y === y); }
+function warpAt(x, y) { return (map.warps || []).find(w => w.x === x && w.y === y); }
+function canControl() { return !busy && !widgets.some(w => w.interactive && !w.done) && fade === 0; }
+
+function updateField() {
+  for (const e of map.ents) {
+    if (e.kind !== 'npc') continue;
+    if (e.moving) {
+      e.px += Math.sign(e.x * 16 - e.px); e.py += Math.sign(e.y * 16 - e.py); e.anim++;
+      if (e.px === e.x * 16 && e.py === e.y * 16) e.moving = false;
+    } else if (e.wander && !busy && --e.timer <= 0) {
+      e.timer = 60 + ri(0, 160);
+      const d = ['up', 'down', 'left', 'right'][ri(0, 3)];
+      e.dir = d;
+      const [dx, dy] = DIRS[d], nx = e.x + dx, ny = e.y + dy;
+      if (Math.abs(nx - e.hx) <= 2 && Math.abs(ny - e.hy) <= 2 && walkable(nx, ny) && !(nx === player.x && ny === player.y) && !entAt(nx, ny) && !warpAt(nx, ny)) {
+        e.x = nx; e.y = ny; e.moving = true;
+      }
+    }
+  }
+  if (banner && banner.t > 0) banner.t--;
+  if (player.moving) {
+    player.px += player.mdx * 2; player.py += player.mdy * 2; player.anim++;
+    if (player.px === player.x * 16 && player.py === player.y * 16) { player.moving = false; onStep(); }
+    return;
+  }
+  if (!canControl()) return;
+  if (hit('a')) { interact(); return; }
+  if (hit('b')) { runScript(fieldMenu); return; }
+  const d = heldDir();
+  if (d) {
+    player.dir = d;
+    const [dx, dy] = DIRS[d], nx = player.x + dx, ny = player.y + dy;
+    if (walkable(nx, ny) && !entAt(nx, ny)) { player.x = nx; player.y = ny; player.mdx = dx; player.mdy = dy; player.moving = true; }
+  }
+}
+function onStep() {
+  const w = warpAt(player.x, player.y);
+  if (w) { runScript(() => doWarp(w)); return; }
+  if (map.enc) {
+    P.steps++;
+    const t = tileAt(player.x, player.y);
+    const rate = (t === ':' || t === '=') ? 1 / 40 : 1 / 17;
+    if (P.steps > 8 && rnd() < rate) {
+      P.steps = 0;
+      const g = map.enc[ri(0, map.enc.length - 1)];
+      runScript(() => battle(g));
+    }
+  }
+}
+async function doWarp(w) {
+  if (w.check && !(await w.check())) return;
+  sfx('door');
+  await fadeOut(12);
+  loadMap(w.to, w.tx, w.ty, w.dir);
+  await fadeIn(12);
+}
+async function policeCheck() {
+  if (P.weapon) return true;
+  await say('「おーい！ ちょっと まちなさい！」');
+  const cop = map.ents.find(e => e.set === 'police'); if (cop) cop.dir = 'right';
+  await say('「まちの そとは あぶないぞ。 せめて バットくらい もっていきなさい。 おみせで うっているよ。」');
+  closeDlg();
+  player.dir = 'left'; player.x -= 1; player.mdx = -1; player.mdy = 0; player.moving = true;
+  while (player.moving) await nextFrame();
+  return false;
+}
+function interact() {
+  const [dx, dy] = DIRS[player.dir];
+  let tx = player.x + dx, ty = player.y + dy;
+  let e = entAt(tx, ty);
+  if (!e && tileAt(tx, ty) === 'c') { tx += dx; ty += dy; e = entAt(tx, ty); }
+  if (e) {
+    if (e.kind === 'npc' && !e.moving) e.dir = OPP[player.dir];
+    const t = e.talk;
+    runScript(async () => { if (typeof t === 'function') await t(e); else for (const l of t) await say(l); });
+    return;
+  }
+  const t = tileAt(tx, ty), key = `${tx},${ty}`;
+  if (map.signs && map.signs[key]) runScript(() => say(map.signs[key]));
+  else if (t === 'P') runScript(phoneTalk);
+  else if (t === 'b' && mapId === 'home') runScript(bedTalk);
+  else if (t === 'b') runScript(() => say('ふかふかの ベッドだ。 ひとの いえで ねるのは やめておこう。'));
+  else if (t === 'K') runScript(() => say(['「ほしの ずかん」…… ながれぼしに ねがいごとを すると かなうらしい。', '「ちきゅうの ふしぎ」…… むずかしくて よめない。', 'まんがが ぎっしり ならんでいる。 ……あとで よもう。'][ri(0, 2)]));
+}
+
+// ---------------------------------------------------------------- field menu
+function drawMoney() { win(168, 8, 80, 26); const s = `${P.money}えん`; txt(s, 236 - tw(s), 17); }
+function drawMini() {
+  win(8, 164, 128, 68);
+  txt(`${P.name}`, 20, 174); txt(`Lv${P.lv}`, 124 - tw(`Lv${P.lv}`), 174);
+  txt('HP', 20, 192); const h = `${P.hpT}/${P.maxhp}`; txt(h, 124 - tw(h), 192);
+  txt('PP', 20, 208); const p = `${P.pp}/${P.maxpp}`; txt(p, 124 - tw(p), 208);
+}
+async function fieldMenu() {
+  sfx('ok');
+  const pm = panel(drawMoney), mini = panel(drawMini);
+  let last = 0;
+  for (;;) {
+    const h = menu(['どうぐ', 'つよさ', 'ふしぎ', 'とじる'], { x: 8, y: 8, w: 72, start: last, persist: true });
+    const c = await h.wait();
+    if (c < 0 || c === 3) { h.close(); break; }
+    last = c;
+    if (c === 0) await itemMenu();
+    else if (c === 1) await statusScreen();
+    else if (c === 2) await skillMenuField();
+    h.close();
+  }
+  pm.close(); mini.close();
+}
+async function itemMenu() {
+  if (!P.inv.length) { await say('なにも もっていない。'); closeDlg(); return; }
+  const h = menu(P.inv.map(id => ITEMS[id].name), { x: 84, y: 8, w: 120, persist: true });
+  const i = await h.wait();
+  if (i < 0) { h.close(); return; }
+  const c = await choose(['つかう', 'すてる'], { x: 150, y: 24 + i * 14, w: 64 });
+  h.close();
+  if (c === 0) await useItemField(i);
+  else if (c === 1) {
+    await say(`${ITEMS[P.inv[i]].name}を すてますか？`);
+    if (await yesno()) { const nm = ITEMS[P.inv[i]].name; P.inv.splice(i, 1); await say(`${nm}を すてた。`); }
+  }
+  closeDlg();
+}
+async function useItemField(i) {
+  const id = P.inv[i], it = ITEMS[id];
+  if (it.type === 'hp') {
+    P.inv.splice(i, 1); sfx('heal');
+    const n = healHP(it.amt);
+    await say(`${P.name}は ${it.name}を ${it.verb}。\nHPが ${n} かいふくした！`);
+  } else if (it.type === 'pp') {
+    P.inv.splice(i, 1); sfx('heal');
+    const n = Math.min(P.maxpp - P.pp, it.amt); P.pp += n;
+    await say(`${P.name}は ${it.name}を ${it.verb}。\nPPが ${n} かいふくした！`);
+  } else await say('いまは つかえない。');
+}
+async function statusScreen() {
+  const nextExp = P.lv < EXP.length - 1 ? EXP[P.lv] - P.exp : 0;
+  const pn = panel(() => {
+    win(8, 8, 240, 156);
+    txt(`${P.name}`, 22, 18); txt(`レベル ${P.lv}`, 120, 18);
+    const rows = [
+      ['HP', `${P.hpT} / ${P.maxhp}`], ['PP', `${P.pp} / ${P.maxpp}`],
+      ['こうげき', `${pOff()}`], ['ぼうぎょ', `${pDef()}`], ['すばやさ', `${P.spd}`],
+      ['けいけんち', `${P.exp}`], ['つぎの レベルまで', `${nextExp}`],
+      ['ぶき', P.weapon ? ITEMS[P.weapon].name : 'なし'], ['ぼうぐ', P.armor ? ITEMS[P.armor].name : 'なし']];
+    rows.forEach(([k, v], i) => { txt(k, 22, 36 + i * 13, '#bcbcbc'); txt(v, 232 - tw(v), 36 + i * 13); });
+  });
+  await waitA();
+  pn.close();
+}
+async function skillMenuField() {
+  const sk = SKILLS.filter(s => P.lv >= s.lv);
+  const i = await choose(sk.map(s => ({ label: s.name, right: `${s.pp}`, dis: s.type !== 'heal' || P.pp < s.pp })), { x: 84, y: 8, w: 120, title: 'しょうひPP' });
+  if (i < 0) return;
+  const s = sk[i];
+  P.pp -= s.pp; sfx('heal');
+  const n = healHP(s.amt);
+  await say(`${P.name}は ${s.name}を つかった！\nHPが ${n} かいふくした！`);
+  closeDlg();
+}
+
+// ---------------------------------------------------------------- events
+async function openGift(id, item) {
+  if (F.gifts[id]) { await say('からっぽだ。'); return; }
+  const it = ITEMS[item];
+  if (it.type === 'weapon' || it.type === 'armor') {
+    F.gifts[id] = true; sfx('item');
+    await say(`プレゼントの はこを あけた。\nなかには ${it.name}が はいっていた！`);
+    await equip(item);
+    return;
+  }
+  if (P.inv.length >= 8) { await say('プレゼントの はこが ある。\nでも もちものが いっぱいで もてない。'); return; }
+  F.gifts[id] = true; P.inv.push(item); sfx('item');
+  await say(`プレゼントの はこを あけた。\n${P.name}は ${it.name}を てにいれた！`);
+}
+async function equip(id) {
+  const it = ITEMS[id], slot = it.type === 'weapon' ? 'weapon' : 'armor', key = slot === 'weapon' ? 'off' : 'def';
+  if (P[slot] && ITEMS[P[slot]][key] >= it[key]) { await say(`でも いまの ${slot === 'weapon' ? 'ぶき' : 'ぼうぐ'}の ほうが つよそうだ。`); return false; }
+  P[slot] = id;
+  await say(`${P.name}は ${it.name}を そうびした！`);
+  return true;
+}
+async function momTalk() {
+  if (F.mom === 0) {
+    F.mom = 1;
+    await say(`「おはよう ${P.name}。 ゆうべの ながれぼし、 みた？」`);
+    await say('「うらやまの ほうへ おちたって、 まちじゅう おおさわぎよ。 のらいぬも きゅうに あばれだすし……」');
+    await say('「……いくつもり なのね。 しかたない こ。 はい、 おこづかい。」');
+    P.money += 50; playSong('item', true);
+    await say(`${P.name}は 50えん もらった！`);
+    playSong(map.song);
+    await say('「おみせで バットでも かっていきなさい。 つかれたら いつでも かえってくるのよ。」');
+    await say('「それから、 ときどき パパに でんわしてあげてね。 よろこぶわ。」');
+    return;
+  }
+  await say(`「おかえり ${P.name}！ ${P.food}を つくっておいたわよ。」`);
+  playSong('heal', true); healFull();
+  await say(`${P.name}は ${P.food}を たべて、 げんきいっぱいに なった！`);
+  await wait(20); playSong(map.song);
+}
+async function phoneTalk() {
+  await say('ジリリリン…… がちゃ。');
+  await say(`「もしもし、 パパだ。 ${P.name}、 がんばっているみたいだな。」`);
+  await say('「いままでの ことを きろく しておこうか？」');
+  if (await yesno()) {
+    if (saveGame()) await say('「……よし、 きろくしたぞ。 むりは するなよ。」');
+    else await say('「……おや、 でんわが とおいな。 きろく できなかったみたいだ。」');
+  } else await say('「そうか。 また いつでも かけておいで。」');
+  await say('がちゃ。 ツー、 ツー……');
+}
+async function bedTalk() {
+  await say('ベッドで ひとやすみ しますか？');
+  if (!(await yesno())) return;
+  closeDlg();
+  await fadeOut(30);
+  playSong('heal', true); healFull();
+  await wait(jingleFrames('heal'));
+  await fadeIn(30);
+  playSong(map.song);
+  await say('ぐっすり ねむって げんきに なった！');
+}
+async function yutaTalk() {
+  if (!F.yuta) {
+    F.yuta = true;
+    await say(`「よう ${P.name}！ うらやまに いくんだって？」`);
+    await say('「これ、 ばあちゃんが くれた おまもり。 とくべつに かしてやるよ。」');
+    sfx('item');
+    await say(`${P.name}は おまもりを うけとった。`);
+    await equip('charm');
+    return;
+  }
+  await say('「おれも いきたいけど、 ママに おこられるからな……。 がんばれよ！」');
+}
+async function grannyTalk() {
+  await say('「おや、 ぼうや。 つかれた かおを しているね。 すこし やすんで おいき。」');
+  playSong('heal', true); healFull();
+  await say('HPと PPが すっかり かいふくした！');
+  await wait(10); playSong(map.song);
+  await say('「どうくつの おくの きかいは とても つよいよ。 レベル 6くらいには なっておきなさい。」');
+}
+async function shopTalk() {
+  await say('「いらっしゃい！ なにに するかね？」');
+  const list = ['bread', 'burger', 'candy', 'bomb', 'bat', 'jacket'];
+  const pm = panel(drawMoney);
+  let last = 0;
+  for (;;) {
+    const i = await choose(list.map(id => ({ label: ITEMS[id].name, right: `${ITEMS[id].price}えん` })), { x: 8, y: 8, w: 156, start: last });
+    if (i < 0) break;
+    last = i;
+    const id = list[i], it = ITEMS[id];
+    if (P.money < it.price) { sfx('buzz'); await say('「おや、 おかねが たりないようだね。」'); continue; }
+    if (it.type === 'weapon' || it.type === 'armor') {
+      const slot = it.type === 'weapon' ? 'weapon' : 'armor', key = slot === 'weapon' ? 'off' : 'def';
+      if (P[slot] && ITEMS[P[slot]][key] >= it[key]) { await say('「それより いいものを もっているじゃないか。」'); continue; }
+      P.money -= it.price; sfx('item');
+      await say('「まいど あり！」');
+      await equip(id);
+      continue;
+    }
+    if (P.inv.length >= 8) { await say('「もちものが いっぱいの ようだね。」'); continue; }
+    P.money -= it.price; P.inv.push(id); sfx('item');
+    await say(`「まいど あり！」\n${P.name}は ${it.name}を かった。`);
+  }
+  pm.close();
+  await say('「また きておくれ！」');
+}
+
+// ================================================================= BATTLE
+function mkEnemy(id) {
+  const d = ENEMIES[id];
+  return Object.assign({ id }, d, { maxhp: d.hp, alive: true, flash: 0, dying: 0, charged: false, scale: d.scale || 4 });
+}
+async function transition() {
+  sfx('enc');
+  trans = { t: 0, max: 36 };
+  while (trans.t < trans.max) { await nextFrame(); trans.t++; }
+}
+async function battle(ids, opt = {}) {
+  playSong(opt.boss ? 'boss' : 'battle');
+  await transition();
+  const en = ids.map(mkEnemy);
+  const counts = {};
+  en.forEach(e => counts[e.name] = (counts[e.name] || 0) + 1);
+  const seen = {};
+  en.forEach(e => { if (counts[e.name] > 1) { seen[e.name] = (seen[e.name] || 0) + 1; e.name += 'ABC'[seen[e.name] - 1]; } });
+  const n = en.length;
+  en.forEach((e, i) => { e.bx = W / 2 + (i - (n - 1) / 2) * 76; e.by = opt.boss ? 112 : 110; });
+  B = { en, t: 0, shake: 0, flash: 0, fx: null, hl: null, dead: false, over: false, boss: !!opt.boss, kind: opt.boss ? 2 : (mapId === 'cave' ? 1 : 0), lastCmd: 0 };
+  scene = 'battle';
+  trans = null;
+  fade = 1;
+  await fadeIn(10);
+  const first = ENEMIES[ids[0]].name;
+  await say(n > 1 ? `${first}たちが あらわれた！` : `${first}が あらわれた！`, { auto: 50 });
+
+  let result = null;
+  outer: for (;;) {
+    if (B.dead) { result = 'lose'; break; }
+    const act = await pickAction();
+    if (B.dead) { result = 'lose'; break; }
+    if (!act) continue;
+    closeDlg();
+    const order = [{ p: true, s: P.spd * (0.8 + rnd() * 0.4) + 0.5 }, ...B.en.filter(e => e.alive).map(e => ({ e, s: e.spd * (0.8 + rnd() * 0.4) }))]
+      .sort((a, b) => b.s - a.s);
+    for (const o of order) {
+      if (B.dead) { result = 'lose'; break outer; }
+      if (o.p) { const r = await doPlayer(act); if (r === 'run') { result = 'run'; break outer; } }
+      else if (o.e.alive) await doEnemy(o.e);
+      if (B.en.every(e => !e.alive)) { result = 'win'; break outer; }
+      if (B.dead) { result = 'lose'; break outer; }
+    }
+  }
+  B.over = true;
+  if (result === 'win') { P.hpT = P.hp; await winBattle(); }
+  else if (result === 'lose') { await loseBattle(); return 'lose'; }
+  closeAll();
+  await fadeOut(16);
+  P.hpT = P.hp = Math.max(1, P.hp);
+  scene = 'field'; B = null;
+  playSong(map.song);
+  await fadeIn(16);
+  return result;
+}
+async function pickAction() {
+  closeDlg();
+  const c = await choose(['たたかう', 'ふしぎ', 'どうぐ', 'にげる'], { x: 8, y: 6, w: 240, cols: 2, colW: 108, cancel: false, start: B.lastCmd });
+  if (c < 0) return null;
+  B.lastCmd = c;
+  if (c === 0) { const e = await pickTarget(); return e ? { t: 'atk', e } : null; }
+  if (c === 1) {
+    const sk = SKILLS.filter(s => P.lv >= s.lv);
+    const i = await choose(sk.map(s => ({ label: s.name, right: `${s.pp}`, dis: P.pp < s.pp })), { x: 8, y: 6, w: 132, title: 'しょうひPP' });
+    if (i < 0) return null;
+    const s = sk[i];
+    if (s.type === 'dmg') { const e = await pickTarget(); return e ? { t: 'skill', s, e } : null; }
+    return { t: 'skill', s };
+  }
+  if (c === 2) {
+    const list = P.inv.map((id, idx) => ({ id, idx })).filter(o => ['hp', 'pp', 'bomb'].includes(ITEMS[o.id].type));
+    if (!list.length) { await say('つかえる どうぐを もっていない。', { auto: 50 }); return null; }
+    const i = await choose(list.map(o => ITEMS[o.id].name), { x: 8, y: 6, w: 132 });
+    if (i < 0) return null;
+    return { t: 'item', idx: list[i].idx };
+  }
+  return { t: 'run' };
+}
+async function pickTarget() {
+  const alive = B.en.filter(e => e.alive);
+  if (alive.length === 1) return alive[0];
+  const i = await choose(alive.map(e => e.name), { x: 8, y: 6, w: 140, onMove: j => { B.hl = alive[j]; } });
+  B.hl = null;
+  return i >= 0 ? alive[i] : null;
+}
+const aliveEn = () => B.en.filter(e => e.alive);
+async function hitEnemy(e, dmg) {
+  e.hp -= dmg; e.flash = 18;
+  await say(`${e.name}に ${dmg}の ダメージ！`, { auto: 34 });
+  if (e.hp <= 0) {
+    e.alive = false; e.dying = 30; sfx('defeat');
+    await say(`${e.name}を やっつけた！`, { auto: 34 });
+  }
+}
+async function doPlayer(act) {
+  if (act.t === 'atk') {
+    let e = act.e.alive ? act.e : aliveEn()[0];
+    await say(`${P.name}の こうげき！`, { auto: 22 });
+    if (rnd() < 1 / 16) { sfx('miss'); await say(`ミス！ ${e.name}は ひらりと かわした。`, { auto: 34 }); return; }
+    const smash = rnd() < 1 / 12;
+    let dmg;
+    if (smash) { dmg = Math.round(pOff() * 3 * (0.9 + rnd() * 0.2)); sfx('smash'); B.flash = 10; await say('スマッシュ！！', { auto: 22 }); }
+    else { dmg = Math.max(1, Math.round((pOff() * 1.5 - e.def * 0.8) * (0.85 + rnd() * 0.3))); sfx('hit'); }
+    await hitEnemy(e, dmg);
+    return;
+  }
+  if (act.t === 'skill') {
+    const s = act.s;
+    if (P.pp < s.pp) { await say(`${P.name}は ${s.name}を つかおうとした！ ……でも PPが たりない。`, { auto: 40 }); return; }
+    P.pp -= s.pp;
+    sfx('psi');
+    await say(`${P.name}は ${s.name}を つかった！`, { auto: 26 });
+    if (s.type === 'heal') {
+      sfx('heal'); B.fx = { kind: 'heal', t: 0 };
+      const n = healHP(s.amt);
+      await say(`HPが ${n} かいふくした！`, { auto: 34 });
+      return;
+    }
+    const targets = s.type === 'all' ? aliveEn() : [act.e.alive ? act.e : aliveEn()[0]];
+    if (s.type === 'all') { sfx('bolt'); B.flash = 14; B.fx = { kind: 'bolt', t: 0, targets }; }
+    else { sfx('fire'); B.fx = { kind: 'fire', t: 0, targets }; }
+    await wait(30);
+    for (const e of targets) if (e.alive) await hitEnemy(e, Math.round(s.base * (0.85 + rnd() * 0.3) + P.lv * 2));
+    return;
+  }
+  if (act.t === 'item') {
+    const id = P.inv[act.idx], it = ITEMS[id];
+    P.inv.splice(act.idx, 1);
+    if (it.type === 'bomb') {
+      await say(`${P.name}は ${it.name}に ひを つけて なげた！`, { auto: 26 });
+      sfx('bomb'); B.flash = 16; B.fx = { kind: 'bomb', t: 0 };
+      await wait(24);
+      for (const e of aliveEn()) await hitEnemy(e, Math.round(it.amt * (0.85 + rnd() * 0.3)));
+      return;
+    }
+    await say(`${P.name}は ${it.name}を ${it.verb}。`, { auto: 26 });
+    sfx('heal'); B.fx = { kind: 'heal', t: 0 };
+    if (it.type === 'hp') { const n = healHP(it.amt); await say(`HPが ${n} かいふくした！`, { auto: 34 }); }
+    else { const n = Math.min(P.maxpp - P.pp, it.amt); P.pp += n; await say(`PPが ${n} かいふくした！`, { auto: 34 }); }
+    return;
+  }
+  if (act.t === 'run') {
+    await say(`${P.name}は にげだした！`, { auto: 22 });
+    if (B.boss) { await say('しかし にげられない！', { auto: 34 }); return; }
+    const avg = aliveEn().reduce((a, e) => a + e.spd, 0) / aliveEn().length;
+    if (rnd() < clamp(0.55 + (P.spd - avg) * 0.05, 0.2, 0.95)) { sfx('step'); B.over = true; return 'run'; }
+    await say('しかし まわりこまれて しまった！', { auto: 34 });
+  }
+}
+async function doEnemy(e) {
+  const total = e.acts.reduce((a, x) => a + x[2], 0);
+  let r = rnd() * total, a = e.acts[0];
+  for (const x of e.acts) { r -= x[2]; if (r < 0) { a = x; break; } }
+  if (e.charged) a = e.acts.find(x => x[0] === 'atk');
+  const [type, msg] = a;
+  await say(`${e.name}は ${msg}`, { auto: 30 });
+  if (type === 'atk') {
+    if (rnd() < 1 / 14) { sfx('miss'); await say(`${P.name}は ひらりと みを かわした！`, { auto: 30 }); return; }
+    let dmg = Math.max(1, Math.round((e.off * 1.5 - pDef() * 0.8) * (0.85 + rnd() * 0.3)));
+    if (e.charged) { dmg *= 2; e.charged = false; }
+    sfx('hurt'); B.shake = 14;
+    P.hpT = Math.max(0, P.hpT - dmg);
+    await say(`${P.name}は ${dmg}の ダメージを うけた！`, { auto: 40 });
+  } else if (type === 'charge') e.charged = true;
+  else if (type === 'pp') {
+    const n = Math.min(P.pp, a[3]); P.pp -= n;
+    await say(`PPが ${n} へった！`, { auto: 30 });
+  }
+}
+async function winBattle() {
+  playSong('win', true);
+  const exp = B.en.reduce((a, e) => a + e.exp, 0), money = B.en.reduce((a, e) => a + e.money, 0);
+  await say(B.boss ? 'ほしくずロボを たおした！' : `${P.name}は たたかいに かった！`);
+  if (exp) await say(`けいけんちを ${exp}ポイント てにいれた。`);
+  if (money) { P.money += money; await say(`${money}えん ひろった。`); }
+  for (const e of B.en) if (e.drop && rnd() < e.drop[1] && P.inv.length < 8) {
+    P.inv.push(e.drop[0]); sfx('item');
+    await say(`${e.name}は ${ITEMS[e.drop[0]].name}を おとしていった！`);
+  }
+  await gainExp(exp);
+}
+async function gainExp(n) {
+  P.exp += n;
+  while (P.lv < EXP.length - 1 && P.exp >= EXP[P.lv]) {
+    P.lv++;
+    playSong('lvup', true);
+    const g = { hp: ri(7, 11), pp: ri(2, 4), off: ri(2, 3), def: ri(1, 2), spd: ri(1, 2) };
+    P.maxhp += g.hp; P.maxpp += g.pp; P.off += g.off; P.def += g.def; P.spd += g.spd;
+    P.hpT += g.hp; P.hp = P.hpT; P.pp += g.pp;
+    await say(`${P.name}は レベル ${P.lv}に あがった！`);
+    await say(`さいだいHPが ${g.hp}、 さいだいPPが ${g.pp} あがった！\nこうげきが ${g.off}、 ぼうぎょが ${g.def}、 すばやさが ${g.spd} あがった！`);
+    const s = SKILLS.find(s => s.lv === P.lv);
+    if (s) { sfx('psi'); await say(`${P.name}は ふしぎな ちから「${s.name}」に めざめた！`); }
+  }
+}
+async function loseBattle() {
+  abortWidgets(); closeAll();
+  stopSong();
+  await say(`${P.name}は きぜつしてしまった……`);
+  playSong('lose', true);
+  await wait(jingleFrames('lose'));
+  closeAll();
+  await fadeOut(40);
+  B = null;
+  P.money = Math.floor(P.money / 2);
+  healFull();
+  loadMap('home', 7, 5, 'up');
+  await fadeIn(30);
+  await say(`「${P.name}！ ${P.name}！ ……よかった、 きが ついたのね。」`);
+  await say('「あなた、 のはらで たおれていたのよ。 あまり むちゃ しないでね。」');
+  await say('（おかねが はんぶんに なってしまった……）');
+}
+
+// ================================================================= BOSS & ENDING
+async function bossTalk() {
+  await say('ガガ…… ピピー……');
+  await say('「ワレワレハ ホシノ チカラヲ アツメル キカイ。\nジャマスル モノハ…… ハイジョ スル。」');
+  closeDlg();
+  const r = await battle(['boss'], { boss: true });
+  if (r === 'win') await endingSeq();
+}
+async function endingSeq() {
+  F.boss = true;
+  map.ents = MAPS.cave.ents();
+  await say('ほしくずロボは しずかに うごかなくなった。');
+  await say('ロボの むねから、 ひかる いしが ころがりおちた。');
+  playSong('item', true);
+  await say(`${P.name}は ほしの かけらを てにいれた！`);
+  await say('ほしの かけらは あたたかく ひかって……\nそらへ のぼって いった。');
+  closeAll();
+  await fadeOut(40);
+  scene = 'story'; fade = 0;
+  playSong('title');
+  await say('その よる、 ほしふるまちには\nかぞえきれない ほどの ながれぼしが ふった。');
+  await say('どうぶつたちも どうぐたちも、\nもとの やさしい すがたに もどっていった。');
+  closeAll();
+  await fadeOut(20);
+  loadMap('home', 7, 5, 'up');
+  banner = null;
+  playSong('title');
+  await fadeIn(30);
+  await say(`「${P.name}、 おかえりなさい！」`);
+  await say(`「きょうは とくべつよ。 ${P.food}、 たくさん つくったからね。」`);
+  await say(`${P.name}は おなか いっぱい ${P.food}を たべた。\n……なんだか、 ずっと まえから こうしたかった きがした。`);
+  closeAll();
+  await fadeOut(40);
+  await credits();
+}
+async function credits() {
+  scene = 'credits';
+  CR = { y: H + 8, lines: [
+    'ほしふるまち', '', '', `しゅじんこう  ${P.name}`, '', `すきな たべもの  ${P.food}`, '', '',
+    'ママ  パパ  ユウタ', 'まちの みなさん', 'のはらの おばあさん', '', '',
+    'そして ほしくずロボ', '', '', 'ファミコンの むかしばなしに', 'あいを こめて', '', '', '', 'THE END'] };
+  fade = 0;
+  const endY = H / 2 - 4 - (CR.lines.length - 1) * 16;
+  while (CR.y > endY) { CR.y -= 0.35; await nextFrame(); }
+  CR.y = endY;
+  await wait(60);
+  await waitA();
+  await fadeOut(40);
+  CR = null;
+  pendingTitle = true;
+}
+
+// ================================================================= TITLE
+const STARS = Array.from({ length: 70 }, () => ({ x: rnd() * W, y: rnd() * H, s: rnd() < 0.15 ? 2 : 1, p: rnd() * 6 }));
+let shooting = null;
+async function titleScript() {
+  scene = 'title'; fade = 0; B = null;
+  playSong('title');
+  for (;;) {
+    await waitA();
+    sfx('ok');
+    const save = loadSave();
+    const c = await choose(['はじめから', { label: 'つづきから', dis: !save }], { x: 88, y: 156, w: 88, cancel: true });
+    if (c < 0) continue;
+    if (c === 1 && save) {
+      P = save.P; F = save.F;
+      if (P.hpT === undefined) P.hpT = P.hp;
+      await fadeOut(24);
+      loadMap(save.map, save.x, save.y, save.dir);
+      await fadeIn(24);
+      await say(`（${P.name}の ぼうけんの つづきから はじめます）`);
+      return;
+    }
+    break;
+  }
+  await fadeOut(20);
+  scene = 'name'; fade = 0;
+  const name = await nameEntry('しゅじんこうの なまえを きめてください。', 'ケン', 5);
+  const food = await nameEntry('あなたの すきな たべものは？', 'ハンバーグ', 6);
+  newGame(name, food);
+  scene = 'story';
+  await say('ある ひの よる。\nちいさな まち「ほしふるまち」の うらやまに\nひとつの ながれぼしが おちた。');
+  await say('その ひから、 まちの どうぶつや どうぐたちが\nなぜか ひとを おそうように なった……。');
+  await say(`これは ひとりの しょうねん ${name}の\nちいさな だいぼうけんの ものがたり。`);
+  closeAll();
+  await fadeOut(30);
+  loadMap('home', 10, 2, 'down');
+  await fadeIn(30);
+  await say(`……あさだ。 ${name}は めを さました。`);
+  await say('（Zキー・Aボタンで はなす・しらべる、 Xキー・Bボタンで メニュー。）');
+  await say('ママに あいさつ しよう。');
+}
+
+// ================================================================= UPDATE
+function updateBattle() {
+  B.t++;
+  if (B.shake > 0) B.shake--;
+  if (B.flash > 0) B.flash--;
+  for (const e of B.en) { if (e.flash > 0) e.flash--; if (e.dying > 0) e.dying--; }
+  if (B.fx) { B.fx.t++; if (B.fx.t > 40) B.fx = null; }
+  if (!B.over) {
+    if (P.hp > P.hpT) { if (B.t % 3 === 0) P.hp--; }
+    else if (P.hp < P.hpT) P.hp = Math.min(P.hpT, P.hp + 2);
+    if (P.hp <= 0 && !B.dead) { B.dead = true; abortWidgets(); }
+  }
+}
+function step() {
+  frame++;
+  for (const k in held) if (held[k]) holdT[k] = (holdT[k] || 0) + 1;
+  for (let i = widgets.length - 1; i >= 0; i--) {
+    const w = widgets[i];
+    if (w.interactive && !w.done) { w.update(); break; }
+  }
+  if (scene === 'field' && map) updateField();
+  else if (scene === 'battle' && B) updateBattle();
+  if (P && scene !== 'battle') P.hp = P.hpT;
+  if (pendingTitle && !busy) { pendingTitle = false; runScript(titleScript); }
+  const ws = waiters; waiters = [];
+  ws.forEach(r => r());
+  for (const k in pressed) pressed[k] = false;
+}
+
+// ================================================================= DRAW
+function drawStars(t, dim = 1) {
+  for (const s of STARS) {
+    const tw_ = (Math.sin(t * 0.04 + s.p) + 1) / 2;
+    ctx.globalAlpha = (0.35 + tw_ * 0.65) * dim;
+    rect(Math.floor(s.x), Math.floor(s.y), s.s, s.s, s.s > 1 ? '#fce0a8' : '#fcfcfc');
+  }
+  ctx.globalAlpha = 1;
+}
+function drawTitle() {
+  rect(0, 0, W, H, '#080818');
+  drawStars(frame);
+  if (!shooting && frame % 200 === 0) shooting = { x: 180 + rnd() * 60, y: 10 + rnd() * 30, t: 0 };
+  if (shooting) {
+    shooting.t++;
+    const x = shooting.x - shooting.t * 3, y = shooting.y + shooting.t * 1.5;
+    for (let i = 0; i < 10; i++) { ctx.globalAlpha = 1 - i / 10; rect(Math.floor(x + i * 3), Math.floor(y - i * 1.5), 2, 1, '#fce0a8'); }
+    ctx.globalAlpha = 1;
+    if (shooting.t > 40) shooting = null;
+  }
+  // town silhouette
+  const sil = '#14142c';
+  rect(0, 196, W, 44, sil);
+  [[8, 176, 36, 20], [52, 168, 28, 28], [96, 180, 44, 16], [150, 172, 30, 24], [196, 178, 50, 18]].forEach(([x, y, w, h]) => {
+    rect(x, y, w, h, sil);
+    for (let i = 0; i < w / 2; i++) rect(x + i, y - Math.min(i, w - i) / 2, 1, Math.min(i, w - i) / 2, sil);
+  });
+  [[18, 184], [60, 178], [110, 186], [160, 180], [212, 186], [228, 186]].forEach(([x, y], i) => rect(x, y, 4, 4, (frame + i * 40) % 300 < 260 ? '#f8b800' : '#503000'));
+  txt('ほしふるまち', W / 2 - tw('ほしふるまち', 32) / 2, 62, '#fce0a8', 32);
+  txt('S T A R F A L L   T O W N', W / 2 - tw('S T A R F A L L   T O W N') / 2, 92, '#88a0f8');
+  if (!widgets.some(w => w.items) && frame % 60 < 40) txt('Z / A ボタンで はじめる', W / 2 - tw('Z / A ボタンで はじめる') / 2, 136, '#fcfcfc');
+}
+function camera() {
+  const mw = map.w * 16, mh = map.h * 16;
+  const cx = mw <= W ? (mw - W) / 2 : clamp(player.px + 8 - W / 2, 0, mw - W);
+  const cy = mh <= H ? (mh - H) / 2 : clamp(player.py + 8 - H / 2, 0, mh - H);
+  return { x: Math.round(cx), y: Math.round(cy) };
+}
+function drawField() {
+  rect(0, 0, W, H, '#000');
+  const cam = camera();
+  const x0 = Math.floor(cam.x / 16), y0 = Math.floor(cam.y / 16);
+  const wf = Math.floor(frame / 30) % 2;
+  for (let ty = y0; ty <= y0 + 15; ty++) for (let tx = x0; tx <= x0 + 16; tx++) {
+    const ch = tileAt(tx, ty); if (ch === null) continue;
+    let img = TILES[ch]; if (!img) continue;
+    if (Array.isArray(img)) img = img[wf];
+    ctx.drawImage(img, tx * 16 - cam.x, ty * 16 - cam.y);
+  }
+  const list = [...map.ents, { kind: 'player', py: player.py }].sort((a, b) => a.py - b.py);
+  for (const e of list) {
+    if (e.kind === 'player') {
+      const f = player.moving ? (player.anim >> 2) & 1 : 0;
+      ctx.drawImage(SPR.hero[player.dir][f], player.px - cam.x, player.py - cam.y - 2);
+    } else if (e.kind === 'npc') {
+      const f = e.moving ? (e.anim >> 3) & 1 : 0;
+      ctx.drawImage(SPR[e.set][e.dir][f], e.px - cam.x, e.py - cam.y - 2);
+    } else if (e.kind === 'gift') {
+      ctx.drawImage(F.gifts[e.id] ? SPR.giftOpen : SPR.gift, e.px - cam.x, e.py - cam.y);
+    } else if (e.kind === 'boss') {
+      const bob = Math.round(Math.sin(frame * 0.08) * 1);
+      ctx.drawImage(SPR.boss, e.px - cam.x, e.py - cam.y + bob);
+      if (frame % 20 < 10) rect(e.px - cam.x + 7, e.py - cam.y - 2 + bob, 2, 2, '#fce0a8');
+    }
+  }
+  if (map.id === 'cave') {
+    // soft darkness around the player
+    const cx = player.px - cam.x + 8, cy = player.py - cam.y + 8;
+    const g = ctx.createRadialGradient(cx, cy, 30, cx, cy, 120);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.75)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  if (banner && banner.t > 0 && banner.t < 140) {
+    const bw = tw(banner.text) + 28;
+    win(W / 2 - bw / 2, 12, bw, 26);
+    txt(banner.text, W / 2 - bw / 2 + 14, 21);
+  }
+}
+function drawBattleBG() {
+  const pals = [['#18082c', '#3a1660'], ['#06141e', '#0e3448'], ['#2a0606', '#6a1418']];
+  const [c1, c2] = pals[B.kind];
+  rect(0, 0, W, H, c1);
+  ctx.fillStyle = c2;
+  const t = B.t;
+  for (let y = 0; y < H; y += 2) {
+    const off = Math.sin(y * 0.06 + t * 0.04) * 14 + t * 0.4;
+    const o = ((off % 32) + 32) % 32;
+    for (let x = -32; x < W + 32; x += 32) ctx.fillRect(Math.floor(x + o), y, 12, 1);
+  }
+}
+function drawBattle() {
+  drawBattleBG();
+  for (const e of B.en) {
+    if (!e.alive && e.dying <= 0) continue;
+    if (e.flash > 0 && e.flash % 4 < 2) continue;
+    const sz = 16 * e.scale;
+    const bob = Math.round(Math.sin(B.t * 0.06 + e.bx) * 2);
+    ctx.globalAlpha = e.alive ? 1 : e.dying / 30;
+    ctx.drawImage(SPR[e.id], Math.round(e.bx - sz / 2), Math.round(e.by - sz / 2 + bob + (e.alive ? 0 : (30 - e.dying))), sz, sz);
+    ctx.globalAlpha = 1;
+    if (B.hl === e && frame % 20 < 14) arrowD(Math.round(e.bx - 3), Math.round(e.by - sz / 2 - 12), '#f8b800');
+  }
+  // effects
+  const fx = B.fx;
+  if (fx) {
+    if (fx.kind === 'fire') for (const e of fx.targets) for (let i = 0; i < 14; i++) {
+      const a = i / 14 * Math.PI * 2 + fx.t * 0.2, r = 10 + fx.t * 0.8;
+      rect(Math.round(e.bx + Math.cos(a) * r) - 2, Math.round(e.by + Math.sin(a) * r * 0.6) - 2, 4, 4, i % 2 ? '#fc7840' : '#f8b800');
+    }
+    if (fx.kind === 'bolt' && fx.t < 24 && fx.t % 4 < 2) for (const e of fx.targets) {
+      let x = e.bx;
+      for (let y = 0; y < e.by; y += 6) { const nx = x + ri(-6, 6); rect(Math.min(x, nx), y, Math.abs(nx - x) + 2, 6, '#fce0a8'); x = nx; }
+    }
+    if (fx.kind === 'bomb') { ctx.globalAlpha = Math.max(0, 1 - fx.t / 30); ctx.fillStyle = '#fc7840'; ctx.beginPath(); ctx.arc(W / 2, 110, fx.t * 4, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; }
+    if (fx.kind === 'heal') for (let i = 0; i < 8; i++) {
+      const x = 92 + (i * 37) % 72, y = 228 - ((fx.t * 2 + i * 13) % 60);
+      rect(x, y - 2, 1, 5, '#58d854'); rect(x - 2, y, 5, 1, '#58d854');
+    }
+  }
+  // status box
+  const sx = 88 + (B.shake ? ri(-2, 2) : 0), sy = 172 + (B.shake ? ri(-2, 2) : 0);
+  win(sx, sy, 80, 60);
+  txt(P.name, sx + 12, sy + 9);
+  const low = P.hp <= P.maxhp / 4;
+  txt('HP', sx + 12, sy + 25, '#bcbcbc'); txt(String(P.hp).padStart(3, ' '), sx + 44, sy + 25, low ? '#fc7840' : '#fcfcfc');
+  txt('PP', sx + 12, sy + 41, '#bcbcbc'); txt(String(P.pp).padStart(3, ' '), sx + 44, sy + 41);
+  if (P.hp > P.hpT && !B.over && frame % 16 < 8) rect(sx + 68, sy + 28, 3, 3, '#fc7840');
+  if (B.flash > 0) { ctx.globalAlpha = B.flash / 16; rect(0, 0, W, H, '#fcfcfc'); ctx.globalAlpha = 1; }
+}
+function drawTransition() {
+  const t = trans.t / trans.max;
+  for (let r = 0; r < 30; r++) {
+    const w = clamp(t * 330 - (r % 2 ? 0 : 40) - Math.abs(r - 15) * 4, 0, W);
+    if (r % 2) rect(0, r * 8, w, 8, '#000'); else rect(W - w, r * 8, w, 8, '#000');
+  }
+}
+function drawCredits() {
+  rect(0, 0, W, H, '#080818');
+  drawStars(frame, 0.8);
+  CR.lines.forEach((l, i) => {
+    const y = CR.y + i * 16;
+    if (y < -10 || y > H) return;
+    const big = l === 'THE END' || i === 0;
+    txt(l, W / 2 - tw(l, big ? 32 : 16) / 2, y - (big ? 4 : 0), big ? '#fce0a8' : '#fcfcfc', big ? 32 : 16);
+  });
+}
+function draw() {
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  if (scene === 'title') drawTitle();
+  else if (scene === 'field' && map) drawField();
+  else if (scene === 'battle' && B) drawBattle();
+  else if (scene === 'credits' && CR) drawCredits();
+  else if (scene === 'story') { rect(0, 0, W, H, '#080818'); drawStars(frame, 0.6); }
+  else rect(0, 0, W, H, '#000');
+  if (trans && scene === 'field') drawTransition();
+  for (const w of widgets) w.draw && w.draw();
+  if (fade > 0) { ctx.globalAlpha = fade; rect(0, 0, W, H, '#000'); ctx.globalAlpha = 1; }
+}
+
+// ================================================================= BOOT
+let lastT = performance.now(), acc = 0;
+function loop(now) {
+  acc += Math.min(100, now - lastT); lastT = now;
+  while (acc >= 1000 / 60) { step(); acc -= 1000 / 60; }
+  draw();
+  requestAnimationFrame(loop);
+}
+async function boot() {
+  buildSprites(); buildTiles();
+  try { await Promise.race([document.fonts.load(`16px "DotGothic16"`), new Promise(r => setTimeout(r, 2500))]); } catch (e) {}
+  requestAnimationFrame(loop);
+  runScript(titleScript);
+}
+boot();
+</script>
+</body>
+</html>
